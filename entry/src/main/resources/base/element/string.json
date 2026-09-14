@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "诡牌酒馆 - Bluff Tavern 鸿蒙应用"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "诡牌酒馆主入口"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "诡牌酒馆"
+    },
+    {
+      "name": "internet_permission_reason",
+      "value": "需要网络连接以进行多人在线游戏"
+    },
+    {
+      "name": "vibrate_permission_reason",
+      "value": "游戏惩罚环节的振动反馈"
+    }
+  ]
+}

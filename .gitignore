@@ -1,0 +1,25 @@
+# HarmonyOS / DevEco Studio
+.idea/
+*.iml
+.hvigor/
+.cxx/
+node_modules/
+oh_modules/
+build/
+.output/
+.entry_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Temporary
+*.tmp
+*.bak

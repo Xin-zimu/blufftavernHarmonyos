@@ -1,0 +1,9 @@
+{
+  "name": "bluff-tavern-harmony",
+  "version": "1.0.0",
+  "description": "诡牌酒馆 - Bluff Tavern 鸿蒙应用",
+  "dependencies": {
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {}
+}
