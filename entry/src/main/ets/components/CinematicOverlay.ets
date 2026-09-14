@@ -65,6 +65,84 @@ export struct CinematicOverlay {
     }
   }
 
+  // ====== 辅助计算方法（@Builder 外） ======
+
+  // 获取当前回合数（替代 ?? 0）
+  private getRoundNumber(): number {
+    if (this.game !== null) {
+      return this.game.roundNumber
+    }
+    return 0
+  }
+
+  // 获取目标牌显示文本（替代 ?? 链）
+  private getTargetRankText(): string {
+    if (this.game !== null) {
+      if (this.game.targetRank !== null) {
+        return this.game.targetRank
+      }
+      if (this.game.targetCard !== null) {
+        return this.game.targetCard
+      }
+    }
+    return 'A'
+  }
+
+  // 获取揭示的牌列表（替代 ?? []）
+  private getRevealedCards(): CardRank[] {
+    if (this.game !== null && this.game.challenge !== null) {
+      if (this.game.challenge.revealedCards !== null) {
+        return this.game.challenge.revealedCards
+      }
+    }
+    return []
+  }
+
+  // 获取质疑者名称
+  private getChallengerName(): string {
+    if (!this.game || !this.game.challenge) return ''
+    for (const player of this.game.players) {
+      if (player.playerId === this.game.challenge?.challengerId) return player.name
+    }
+    return ''
+  }
+
+  // 获取被质疑者名称
+  private getChallengedName(): string {
+    if (!this.game || !this.game.challenge) return ''
+    for (const player of this.game.players) {
+      if (player.playerId === this.game.challenge?.challengedId) return player.name
+    }
+    return ''
+  }
+
+  // 获取受罚者名称
+  private getPunishedName(): string {
+    if (!this.game || !this.game.punishment) return ''
+    for (const player of this.game.players) {
+      if (player.playerId === this.game.punishment?.punishedPlayerId) return player.name
+    }
+    return ''
+  }
+
+  // 获取淘汰者名称
+  private getEliminatedName(): string {
+    if (!this.game || !this.game.punishment || !this.game.punishment.eliminatedPlayerId) return ''
+    for (const player of this.game.players) {
+      if (player.playerId === this.game.punishment?.eliminatedPlayerId) return player.name
+    }
+    return ''
+  }
+
+  // 获取胜者名称
+  private getWinnerName(): string {
+    if (!this.game || !this.game.winnerId) return ''
+    for (const player of this.game.players) {
+      if (player.playerId === this.game.winnerId) return player.name
+    }
+    return ''
+  }
+
   build() {
     if (!this.showOverlay || !this.game) {
       Blank()
@@ -95,44 +173,35 @@ export struct CinematicOverlay {
     }
   }
 
-  // 根据当前阶段显示不同演出内容
+  // 根据当前阶段显示不同演出内容（if-else if 代替 switch）
   @Builder CinematicContent() {
-    if (this.game) {
-      switch (this.game.phase) {
-        case 'ROUND_START':
-          this.RoundStartCinematic()
-          break
-        case 'CHALLENGE_CALLOUT':
-          this.ChallengeCalloutCinematic()
-          break
-        case 'REVEAL':
-          this.RevealCinematic()
-          break
-        case 'VERDICT':
-          this.VerdictCinematic()
-          break
-        case 'PUNISHMENT_INTRO':
-          this.PunishmentIntroCinematic()
-          break
-        case 'PUNISHMENT_TRIGGER':
-          this.PunishmentTriggerCinematic()
-          break
-        case 'PUNISHMENT_RESULT':
-          this.PunishmentResultCinematic()
-          break
-        case 'GAME_OVER':
-          this.GameOverCinematic()
-          break
-        default:
-          Blank()
-      }
+    if (this.game === null) {
+      Blank()
+    } else if (this.game.phase === 'ROUND_START') {
+      this.RoundStartCinematic()
+    } else if (this.game.phase === 'CHALLENGE_CALLOUT') {
+      this.ChallengeCalloutCinematic()
+    } else if (this.game.phase === 'REVEAL') {
+      this.RevealCinematic()
+    } else if (this.game.phase === 'VERDICT') {
+      this.VerdictCinematic()
+    } else if (this.game.phase === 'PUNISHMENT_INTRO') {
+      this.PunishmentIntroCinematic()
+    } else if (this.game.phase === 'PUNISHMENT_TRIGGER') {
+      this.PunishmentTriggerCinematic()
+    } else if (this.game.phase === 'PUNISHMENT_RESULT') {
+      this.PunishmentResultCinematic()
+    } else if (this.game.phase === 'GAME_OVER') {
+      this.GameOverCinematic()
+    } else {
+      Blank()
     }
   }
 
   // 回合开始演出
   @Builder RoundStartCinematic() {
     Column() {
-      Text(`第 ${this.game?.roundNumber ?? 0} 回合`)
+      Text(`第 ${this.getRoundNumber()} 回合`)
         .fontSize(32)
         .fontWeight(FontWeight.Bold)
         .fontColor('#D4A574')
@@ -143,7 +212,7 @@ export struct CinematicOverlay {
           .fontSize(20)
           .fontColor('#FFFFFF')
           .margin({ right: 8 })
-        Text(this.game?.targetRank ?? this.game?.targetCard ?? 'A')
+        Text(this.getTargetRankText())
           .fontSize(36)
           .fontWeight(FontWeight.Bold)
           .fontColor('#D4A574')
@@ -156,27 +225,13 @@ export struct CinematicOverlay {
   // 质疑呼叫演出
   @Builder ChallengeCalloutCinematic() {
     Column() {
-      // 找到质疑者和被质疑者名称
-      let challengerName: string = ''
-      let challengedName: string = ''
-      if (this.game?.challenge) {
-        for (const player of this.game?.players ?? []) {
-          if (player.playerId === this.game?.challenge?.challengerId) {
-            challengerName = player.name
-          }
-          if (player.playerId === this.game?.challenge?.challengedId) {
-            challengedName = player.name
-          }
-        }
-      }
-
       Text('质疑!')
         .fontSize(36)
         .fontWeight(FontWeight.Bold)
         .fontColor('#FF6B6B')
         .margin({ bottom: 16 })
 
-      Text(`${challengerName} 质疑 ${challengedName}`)
+      Text(`${this.getChallengerName()} 质疑 ${this.getChallengedName()}`)
         .fontSize(20)
         .fontColor('#FFFFFF')
     }
@@ -194,9 +249,9 @@ export struct CinematicOverlay {
         .margin({ bottom: 16 })
 
       // 显示翻开的牌
-      if (this.game?.challenge?.revealedCards) {
+      if (this.game !== null && this.game.challenge !== null && this.game.challenge.revealedCards !== null) {
         Row() {
-          ForEach(this.game?.challenge?.revealedCards ?? [], (card: CardRank) => {
+          ForEach(this.getRevealedCards(), (card: CardRank) => {
             Column() {
               if (card === 'JOKER') {
                 Text('★')
@@ -233,26 +288,26 @@ export struct CinematicOverlay {
   // 判定演出
   @Builder VerdictCinematic() {
     Column() {
-      if (this.game?.challenge?.wasBluff !== null && this.game?.challenge?.wasBluff !== undefined) {
-        if (this.game?.challenge?.wasBluff) {
-          Text('诈唬!')
-            .fontSize(36)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#FF6B6B')
-            .margin({ bottom: 8 })
-          Text('出牌者受罚')
-            .fontSize(18)
-            .fontColor('#FFFFFF')
-        } else {
-          Text('诚实!')
-            .fontSize(36)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#4CAF50')
-            .margin({ bottom: 8 })
-          Text('质疑者受罚')
-            .fontSize(18)
-            .fontColor('#FFFFFF')
-        }
+      if (this.game?.challenge?.wasBluff === true) {
+        Text('诈唬!')
+          .fontSize(36)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FF6B6B')
+          .margin({ bottom: 8 })
+        Text('出牌者受罚')
+          .fontSize(18)
+          .fontColor('#FFFFFF')
+      } else if (this.game?.challenge?.wasBluff === false) {
+        Text('诚实!')
+          .fontSize(36)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#4CAF50')
+          .margin({ bottom: 8 })
+        Text('质疑者受罚')
+          .fontSize(18)
+          .fontColor('#FFFFFF')
+      } else {
+        Blank()
       }
     }
     .justifyContent(FlexAlign.Center)
@@ -262,28 +317,12 @@ export struct CinematicOverlay {
   // 左轮准备演出
   @Builder PunishmentIntroCinematic() {
     Column() {
-      Image($r('app.media.cinematic_revolver_side_v1'))
-        .width(160)
-        .height(80)
-        .margin({ bottom: 16 })
-
       Text('左轮手枪')
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
         .fontColor('#D4A574')
 
-      // 找到受罚者名称
-      let punishedName: string = ''
-      if (this.game?.punishment) {
-        for (const player of this.game?.players ?? []) {
-          if (player.playerId === this.game?.punishment?.punishedPlayerId) {
-            punishedName = player.name
-            break
-          }
-        }
-      }
-
-      Text(`${punishedName} 准备接受惩罚`)
+      Text(`${this.getPunishedName()} 准备接受惩罚`)
         .fontSize(18)
         .fontColor('#FFFFFF')
         .margin({ top: 8 })
@@ -295,12 +334,6 @@ export struct CinematicOverlay {
   // 扣动扳机演出
   @Builder PunishmentTriggerCinematic() {
     Column() {
-      // 枪口火焰效果
-      Image($r('app.media.cinematic_muzzle_flash_smoke_v1'))
-        .width(120)
-        .height(80)
-        .margin({ bottom: 16 })
-
       Text('扣动扳机...')
         .fontSize(28)
         .fontWeight(FontWeight.Bold)
@@ -320,18 +353,7 @@ export struct CinematicOverlay {
           .fontColor('#FF6B6B')
           .margin({ bottom: 8 })
 
-        // 找到淘汰者名称
-        let eliminatedName: string = ''
-        if (this.game?.punishment?.eliminatedPlayerId) {
-          for (const player of this.game?.players ?? []) {
-            if (player.playerId === this.game?.punishment?.eliminatedPlayerId) {
-              eliminatedName = player.name
-              break
-            }
-          }
-        }
-
-        Text(`${eliminatedName} 被淘汰`)
+        Text(`${this.getEliminatedName()} 被淘汰`)
           .fontSize(20)
           .fontColor('#FFFFFF')
       } else {
@@ -359,18 +381,7 @@ export struct CinematicOverlay {
         .fontColor('#D4A574')
         .margin({ bottom: 16 })
 
-      // 找到胜者名称
-      let winnerName: string = ''
-      if (this.game?.winnerId) {
-        for (const player of this.game?.players ?? []) {
-          if (player.playerId === this.game?.winnerId) {
-            winnerName = player.name
-            break
-          }
-        }
-      }
-
-      Text(`${winnerName} 获胜!`)
+      Text(`${this.getWinnerName()} 获胜!`)
         .fontSize(28)
         .fontWeight(FontWeight.Bold)
         .fontColor('#4CAF50')

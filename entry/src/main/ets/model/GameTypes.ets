@@ -1,4 +1,5 @@
 // 游戏类型定义 - 对应 shared/types/index.ts
+// ArkTS 严格类型版本
 
 // 连接状态
 export type ConnectionStatus = 'connected' | 'disconnected' | 'connecting'
@@ -41,6 +42,11 @@ export type GamePhase =
   | 'ROUND_END'
   | 'GAME_OVER'
 
+// 角色表情类型
+export type CharacterMood = 'idle' | 'suspicious' | 'bluff' | 'shocked' | 'laugh' | 'nervous' | 'eliminated' | 'victory'
+
+// ====== 基础数据类 ======
+
 // 房间设置
 export class RoomSettings {
   maxPlayers: number = 8
@@ -77,20 +83,6 @@ export class RoomMembership {
   room: RoomView = new RoomView()
   playerId: string = ''
   sessionToken: string = ''
-}
-
-// 会话恢复结果
-export class SessionResumeResult {
-  room: RoomView = new RoomView()
-  playerId: string = ''
-  sessionToken: string = ''
-  game: GameSnapshot | null = null
-}
-
-// 房间玩家事件
-export class RoomPlayerEvent {
-  roomCode: string = ''
-  player: PlayerView = new PlayerView()
 }
 
 // 左轮手枪状态
@@ -190,7 +182,6 @@ export class GameSnapshot {
   winnerId: string | null = null
   summary: GameSummary | null = null
 
-  tavernEvent: null = null
   items: ItemId[] = []
   challengeResult: ChallengeResult | null = null
 }
@@ -217,20 +208,30 @@ export class GameCue {
   roundNumber: number | null = null
 }
 
-// Ack 响应
-export class AckSuccess<T> {
-  ok: boolean = true
-  data: T = null as T
+// 会话恢复结果
+export class SessionResumeResult {
+  room: RoomView = new RoomView()
+  playerId: string = ''
+  sessionToken: string = ''
+  game: GameSnapshot | null = null
 }
 
-export class AckFailure {
-  ok: boolean = false
-  error: AckError = new AckError()
+// 房间玩家事件
+export class RoomPlayerEvent {
+  roomCode: string = ''
+  player: PlayerView = new PlayerView()
 }
+
+// ====== Ack 响应（非泛型，ArkTS 兼容） ======
 
 export class AckError {
   code: string = ''
   message: string = ''
 }
 
-export type Ack<T> = AckSuccess<T> | AckFailure
+// 统一的 Ack 响应结构，data 为 ESObject 以兼容任意类型
+export class AckResult {
+  ok: boolean = false
+  data: ESObject = null
+  error: AckError = new AckError()
+}

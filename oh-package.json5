@@ -2,8 +2,9 @@
   "name": "bluff-tavern-harmony",
   "version": "1.0.0",
   "description": "诡牌酒馆 - Bluff Tavern 鸿蒙应用",
-  "dependencies": {
-    "socket.io-client": "^4.7.5"
-  },
-  "devDependencies": {}
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.6",
+    "@ohos/hvigor-ohos-plugin": "4.0.2"
+  }
 }

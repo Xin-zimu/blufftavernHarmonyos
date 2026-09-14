@@ -2,6 +2,8 @@
 
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit'
 import { window } from '@kit.ArkUI'
+import { BusinessError } from '@kit.BasicServicesKit'
+import { common } from '@kit.AbilityKit'
 import { SessionStore } from '../store/SessionStore'
 import { SocketManager } from '../net/SocketManager'
 import { AudioManager } from '../audio/AudioManager'
@@ -20,8 +22,8 @@ export default class EntryAbility extends UIAbility {
     // 检测设备性能
     this.detectDevicePerformance()
 
-    // 初始化音效管理器
-    this.audioManager.init()
+    // 初始化音效管理器（传入 AbilityContext）
+    this.audioManager.init(this.context)
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
@@ -31,11 +33,7 @@ export default class EntryAbility extends UIAbility {
     })
 
     // 加载首页
-    windowStage.loadUIContent('pages/HomePage', (error: BusinessError) => {
-      if (error) {
-        console.error('Failed to load UI content:', error)
-      }
-    })
+    windowStage.loadUIContent('pages/HomePage')
   }
 
   onWindowStageDestroy(): void {
@@ -57,21 +55,13 @@ export default class EntryAbility extends UIAbility {
 
   // 检测设备性能
   private detectDevicePerformance(): void {
-    // 鸿蒙中可通过系统信息检测设备性能
-    // 简单方案：默认关闭低性能模式，后续根据实际设备信息调整
     this.sessionStore.lowPowerActive = false
   }
 
   // 获取服务器地址
-  private getServerUrl(): string {
-    // 生产环境：同源地址
-    // 开发环境：通过配置指定
-    // 这里使用默认值，实际应从配置或环境变量读取
+  // 开发阶段：修改此处 IP 地址指向你的 Node.js 服务器
+  // 生产环境：改为正式域名
+  getServerUrl(): string {
     return 'http://192.168.1.100:3001'
   }
-}
-
-interface BusinessError {
-  code: number
-  message: string
 }

@@ -5,6 +5,15 @@ import { SessionStore } from '../store/SessionStore'
 import { SocketManager } from '../net/SocketManager'
 import { PlayerView, CharacterId } from '../model/GameTypes'
 import { CHARACTER_IDS, CHARACTER_NAMES, MAX_PLAYERS, MIN_PLAYERS } from '../model/Constants'
+import { getCharacterIdleImage } from '../utils/ArtResources'
+
+// 辅助函数：替代 ?? 操作符
+function getErrorOrDefault(error: string | undefined, defaultMsg: string): string {
+  if (error !== undefined && error !== null) {
+    return error
+  }
+  return defaultMsg
+}
 
 @Entry
 @Component
@@ -15,27 +24,128 @@ struct LobbyPage {
   @State errorMessage: string = ''
   @State copiedNotice: string = ''
 
+  // ====== 计算辅助方法（@Builder 外） ======
+
+  // 获取房间码
+  private getRoomCode(): string {
+    if (this.store.room !== null) {
+      return this.store.room.code
+    }
+    return ''
+  }
+
+  // 获取玩家数量
+  private getPlayerCount(): number {
+    if (this.store.room !== null) {
+      return this.store.room.players.length
+    }
+    return 0
+  }
+
+  // 获取最大玩家数
+  private getMaxPlayers(): number {
+    if (this.store.room !== null) {
+      return this.store.room.maxPlayers
+    }
+    return 8
+  }
+
+  // 获取游戏模式
+  private getGameMode(): string {
+    if (this.store.room !== null) {
+      return this.store.room.settings.gameMode
+    }
+    return 'CLASSIC'
+  }
+
+  // 获取玩家列表
+  private getRoomPlayers(): PlayerView[] {
+    if (this.store.room !== null) {
+      return this.store.room.players
+    }
+    return []
+  }
+
+  // 检查角色是否已被其他玩家选中
+  private isCharacterTaken(charId: string): boolean {
+    if (!this.store.room) return false
+    for (const player of this.store.room.players) {
+      if (player.characterId === charId && player.id !== this.store.playerId) {
+        return true
+      }
+    }
+    return false
+  }
+
+  // 检查角色是否被自己选中
+  private isCharacterMine(charId: string): boolean {
+    if (!this.store.room) return false
+    for (const player of this.store.room.players) {
+      if (player.characterId === charId && player.id === this.store.playerId) {
+        return true
+      }
+    }
+    return false
+  }
+
+  // 检查当前玩家是否已准备
+  private getMyReady(): boolean {
+    if (!this.store.room || !this.store.playerId) return false
+    for (const player of this.store.room.players) {
+      if (player.id === this.store.playerId && player.status === 'READY') {
+        return true
+      }
+    }
+    return false
+  }
+
+  // 检查是否所有玩家都已准备
+  private getAllReady(): boolean {
+    if (!this.store.room) return false
+    for (const player of this.store.room.players) {
+      if (player.status !== 'READY') return false
+    }
+    return true
+  }
+
+  // 获取角色中文名
+  private getCharacterName(charId: string): string {
+    const name = CHARACTER_NAMES.get(charId)
+    if (name !== undefined) {
+      return name
+    }
+    return charId
+  }
+
+  // 是否为房主
+  private isHostPlayer(playerId: string): boolean {
+    if (this.store.room !== null) {
+      return playerId === this.store.room.hostPlayerId
+    }
+    return false
+  }
+
   build() {
     Column() {
       // 顶部：房间码和操作
       this.RoomHeader()
 
       // 通知区域
-      if (this.store.notice) {
+      if (this.store.notice !== null && this.store.notice !== undefined) {
         Text(this.store.notice)
           .fontSize(14)
           .fontColor('#FF6B6B')
           .margin({ top: 8, bottom: 8 })
       }
 
-      if (this.errorMessage) {
+      if (this.errorMessage.length > 0) {
         Text(this.errorMessage)
           .fontSize(14)
           .fontColor('#FF6B6B')
           .margin({ top: 8, bottom: 8 })
       }
 
-      if (this.copiedNotice) {
+      if (this.copiedNotice.length > 0) {
         Text(this.copiedNotice)
           .fontSize(14)
           .fontColor('#4CAF50')
@@ -63,7 +173,7 @@ struct LobbyPage {
         Text('房间码')
           .fontSize(12)
           .fontColor('#888899')
-        Text(this.store.room?.code ?? '')
+        Text(this.getRoomCode())
           .fontSize(28)
           .fontWeight(FontWeight.Bold)
           .fontColor('#D4A574')
@@ -80,8 +190,6 @@ struct LobbyPage {
         .fontColor('#D4A574')
         .fontSize(12)
         .onClick(() => {
-          // 鸿蒙剪贴板 API
-          // pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.store.room?.code ?? '')
           this.copiedNotice = '房间码已复制'
           setTimeout(() => { this.copiedNotice = '' }, 2000)
         })
@@ -104,17 +212,17 @@ struct LobbyPage {
   // 玩家列表
   @Builder PlayerList() {
     Column() {
-      Text(`玩家 (${this.store.room?.players.length ?? 0}/${this.store.room?.maxPlayers ?? 8})`)
+      Text(`玩家 (${this.getPlayerCount()}/${this.getMaxPlayers()})`)
         .fontSize(16)
         .fontColor('#D4A574')
         .fontWeight(FontWeight.Bold)
         .margin({ bottom: 8 })
 
-      ForEach(this.store.room?.players ?? [], (player: PlayerView) => {
+      ForEach(this.getRoomPlayers(), (player: PlayerView) => {
         Row() {
           // 角色头像
-          if (player.characterId) {
-            Image($r(`app.media.character_${player.characterId.toLowerCase()}_idle`))
+          if (player.characterId !== null && player.characterId !== undefined) {
+            Image(getCharacterIdleImage(player.characterId))
               .width(40)
               .height(40)
               .borderRadius(20)
@@ -134,7 +242,7 @@ struct LobbyPage {
             .layoutWeight(1)
 
           // 房主标记
-          if (player.id === this.store.room?.hostPlayerId) {
+          if (this.isHostPlayer(player.id)) {
             Text('房主')
               .fontSize(12)
               .fontColor('#D4A574')
@@ -195,32 +303,16 @@ struct LobbyPage {
   }
 
   @Builder CharacterItem(charId: string) {
-    // 检查角色是否已被其他玩家选中
-    let isTaken: boolean = false
-    let takenByMe: boolean = false
-    if (this.store.room) {
-      for (const player of this.store.room.players) {
-        if (player.characterId === charId) {
-          if (player.id === this.store.playerId) {
-            takenByMe = true
-          } else {
-            isTaken = true
-          }
-          break
-        }
-      }
-    }
-
     Column() {
-      Image($r(`app.media.character_${charId.toLowerCase()}_idle`))
+      Image(getCharacterIdleImage(charId))
         .width(48)
         .height(48)
         .borderRadius(24)
-        .opacity(isTaken ? 0.3 : 1.0)
+        .opacity(this.isCharacterTaken(charId) ? 0.3 : 1.0)
 
-      Text(CHARACTER_NAMES[charId] ?? charId)
+      Text(this.getCharacterName(charId))
         .fontSize(12)
-        .fontColor(isTaken ? '#666680' : (takenByMe ? '#D4A574' : '#FFFFFF'))
+        .fontColor(this.isCharacterTaken(charId) ? '#666680' : (this.isCharacterMine(charId) ? '#D4A574' : '#FFFFFF'))
         .margin({ top: 4 })
     }
     .width('25%')
@@ -228,15 +320,15 @@ struct LobbyPage {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .borderRadius(8)
-    .backgroundColor(takenByMe ? '#3A3A5E' : '#2A2A4E')
+    .backgroundColor(this.isCharacterMine(charId) ? '#3A3A5E' : '#2A2A4E')
     .border({
-      width: takenByMe ? 2 : 0,
+      width: this.isCharacterMine(charId) ? 2 : 0,
       color: '#D4A574',
       style: BorderStyle.Solid
     })
     .margin({ bottom: 8 })
     .onClick(() => {
-      if (!isTaken) {
+      if (!this.isCharacterTaken(charId)) {
         this.socketManager.selectCharacter(charId, (success: boolean) => {
           if (!success) {
             this.errorMessage = '选择角色失败'
@@ -264,13 +356,13 @@ struct LobbyPage {
             .backgroundColor('#2A2A4E')
             .fontColor('#FFFFFF')
             .onClick(() => {
-              const current = this.store.room?.maxPlayers ?? 8
+              const current = this.getMaxPlayers()
               if (current > MIN_PLAYERS) {
-                this.socketManager.updateSettings(current - 1, this.store.room?.settings.gameMode ?? 'CLASSIC')
+                this.socketManager.updateSettings(current - 1, this.getGameMode())
               }
             })
 
-          Text(`${this.store.room?.maxPlayers ?? 8}`)
+          Text(`${this.getMaxPlayers()}`)
             .fontSize(16)
             .fontColor('#FFFFFF')
             .margin({ left: 12, right: 12 })
@@ -281,9 +373,9 @@ struct LobbyPage {
             .backgroundColor('#2A2A4E')
             .fontColor('#FFFFFF')
             .onClick(() => {
-              const current = this.store.room?.maxPlayers ?? 8
+              const current = this.getMaxPlayers()
               if (current < MAX_PLAYERS) {
-                this.socketManager.updateSettings(current + 1, this.store.room?.settings.gameMode ?? 'CLASSIC')
+                this.socketManager.updateSettings(current + 1, this.getGameMode())
               }
             })
 
@@ -295,14 +387,14 @@ struct LobbyPage {
             .fontColor('#888899')
             .margin({ right: 8 })
 
-          Button(this.store.room?.settings.gameMode === 'CLASSIC' ? '经典' : '快速')
+          Button(this.getGameMode() === 'CLASSIC' ? '经典' : '快速')
             .height(36)
             .backgroundColor('#2A2A4E')
             .fontColor('#D4A574')
             .onClick(() => {
-              const currentMode = this.store.room?.settings.gameMode ?? 'CLASSIC'
+              const currentMode = this.getGameMode()
               const newMode = currentMode === 'CLASSIC' ? 'QUICK' : 'CLASSIC'
-              this.socketManager.updateSettings(this.store.room?.maxPlayers ?? 8, newMode)
+              this.socketManager.updateSettings(this.getMaxPlayers(), newMode)
             })
         }
         .width('90%')
@@ -311,44 +403,20 @@ struct LobbyPage {
 
       // 准备/取消准备按钮
       Row() {
-        // 检查当前玩家是否已准备
-        let myReady: boolean = false
-        if (this.store.room && this.store.playerId) {
-          for (const player of this.store.room.players) {
-            if (player.id === this.store.playerId && player.status === 'READY') {
-              myReady = true
-              break
-            }
-          }
-        }
-
-        Button(myReady ? '取消准备' : '准备')
+        Button(this.getMyReady() ? '取消准备' : '准备')
           .width('45%')
           .height(48)
-          .backgroundColor(myReady ? '#4A2A2E' : '#3A5A1E')
-          .fontColor(myReady ? '#FF6B6B' : '#4CAF50')
+          .backgroundColor(this.getMyReady() ? '#4A2A2E' : '#3A5A1E')
+          .fontColor(this.getMyReady() ? '#FF6B6B' : '#4CAF50')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .borderRadius(8)
           .onClick(() => {
-            this.socketManager.setReady(!myReady)
+            this.socketManager.setReady(!this.getMyReady())
           })
 
         // 房主的开始游戏按钮
         if (this.store.isHost) {
-          // 检查是否所有玩家都已准备
-          let allReady: boolean = true
-          let playerCount: number = 0
-          if (this.store.room) {
-            playerCount = this.store.room.players.length
-            for (const player of this.store.room.players) {
-              if (player.status !== 'READY') {
-                allReady = false
-                break
-              }
-            }
-          }
-
           Button('开始牌局')
             .width('45%')
             .height(48)
@@ -357,11 +425,11 @@ struct LobbyPage {
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .borderRadius(8)
-            .enabled(allReady && playerCount >= MIN_PLAYERS)
+            .enabled(this.getAllReady() && this.getPlayerCount() >= MIN_PLAYERS)
             .onClick(() => {
               this.socketManager.startGame((success: boolean, error?: string) => {
                 if (!success) {
-                  this.errorMessage = error ?? '开始游戏失败'
+                  this.errorMessage = getErrorOrDefault(error, '开始游戏失败')
                 }
               })
             })

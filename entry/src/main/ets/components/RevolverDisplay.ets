@@ -1,4 +1,5 @@
 // 左轮手枪显示组件 - 显示弹巢状态和惩罚结果
+// 注：cinematic_revolver_side_v1 资源不存在，用 Text 图标替代
 
 import { PublicPunishmentState } from '../model/GameTypes'
 
@@ -7,12 +8,11 @@ export struct RevolverDisplay {
   @Prop punishment: PublicPunishmentState | null = null
 
   build() {
-    if (this.punishment) {
+    if (this.punishment !== null) {
       Column() {
-        // 左轮手枪图标
-        Image($r('app.media.cinematic_revolver_side_v1'))
-          .width(120)
-          .height(60)
+        // 左轮手枪图标（用文字替代，资源文件不存在）
+        Text('🔫')
+          .fontSize(48)
           .margin({ bottom: 8 })
 
         // 弹巢位置指示
@@ -21,8 +21,8 @@ export struct RevolverDisplay {
             Circle()
               .width(20)
               .height(20)
-              .fill(chamber === this.punishment!.chamber ? '#FF6B6B' : '#2A2A4E')
-              .stroke(chamber === this.punishment!.chamber ? '#FF6B6B' : '#444466')
+              .fill(chamber === this.punishment?.chamber ? '#FF6B6B' : '#2A2A4E')
+              .stroke(chamber === this.punishment?.chamber ? '#FF6B6B' : '#444466')
               .strokeWidth(1)
               .margin({ left: 4, right: 4 })
           })
@@ -30,7 +30,7 @@ export struct RevolverDisplay {
         .margin({ bottom: 8 })
 
         // 结果显示
-        if (this.punishment.hit) {
+        if (this.punishment?.hit) {
           Text('中弹!')
             .fontSize(24)
             .fontColor('#FF6B6B')
@@ -43,7 +43,7 @@ export struct RevolverDisplay {
         }
 
         // 淘汰信息
-        if (this.punishment.eliminatedPlayerId) {
+        if (this.punishment?.eliminatedPlayerId !== null && this.punishment?.eliminatedPlayerId !== undefined) {
           Text('玩家被淘汰')
             .fontSize(14)
             .fontColor('#FF6B6B')

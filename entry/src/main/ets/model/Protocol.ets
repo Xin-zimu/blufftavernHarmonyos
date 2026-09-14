@@ -1,8 +1,9 @@
 // 事件协议定义 - 对应 shared/protocol/index.ts
 // ArkTS 不支持 Zod，使用手动验证
+// ArkTS 不支持 as const，使用普通 const 对象
 
 import {
-  Ack, RoomMembership, RoomView, GameView, GameSnapshot, GameCue,
+  RoomMembership, RoomView, GameView, GameSnapshot, GameCue,
   RoomPlayerEvent, SessionResumeResult, CharacterId, EmoteId, ItemId,
   GameMode, V6GameMode
 } from './GameTypes'
@@ -144,44 +145,45 @@ export class EmoteEvent {
 }
 
 // ====== 事件名称常量 ======
+// ArkTS 不支持 as const，使用普通 string 属性的 class
 
 // 客户端 -> 服务端
-export const CLIENT_EVENTS = {
-  ROOM_CREATE: 'room:create',
-  ROOM_JOIN: 'room:join',
-  ROOM_LEAVE: 'room:leave',
-  ROOM_READY: 'room:ready',
-  ROOM_UPDATE_SETTINGS: 'room:updateSettings',
-  ROOM_KICK: 'room:kick',
-  ROOM_SELECT_CHARACTER: 'room:selectCharacter',
-  GAME_START: 'game:start',
-  GAME_PLAY_CARDS: 'game:playCards',
-  GAME_CHALLENGE: 'game:challenge',
-  GAME_RESTART: 'game:restart',
-  GAME_RETURN_TO_ROOM: 'game:returnToRoom',
-  GAME_SEND_EMOTE: 'game:sendEmote',
-  GAME_USE_ITEM: 'game:useItem',
-  SESSION_RESUME: 'session:resume',
-} as const
+export class ClientEvents {
+  static readonly ROOM_CREATE: string = 'room:create'
+  static readonly ROOM_JOIN: string = 'room:join'
+  static readonly ROOM_LEAVE: string = 'room:leave'
+  static readonly ROOM_READY: string = 'room:ready'
+  static readonly ROOM_UPDATE_SETTINGS: string = 'room:updateSettings'
+  static readonly ROOM_KICK: string = 'room:kick'
+  static readonly ROOM_SELECT_CHARACTER: string = 'room:selectCharacter'
+  static readonly GAME_START: string = 'game:start'
+  static readonly GAME_PLAY_CARDS: string = 'game:playCards'
+  static readonly GAME_CHALLENGE: string = 'game:challenge'
+  static readonly GAME_RESTART: string = 'game:restart'
+  static readonly GAME_RETURN_TO_ROOM: string = 'game:returnToRoom'
+  static readonly GAME_SEND_EMOTE: string = 'game:sendEmote'
+  static readonly GAME_USE_ITEM: string = 'game:useItem'
+  static readonly SESSION_RESUME: string = 'session:resume'
+}
 
 // 服务端 -> 客户端
-export const SERVER_EVENTS = {
-  ROOM_STATE: 'room:state',
-  ROOM_CLOSED: 'room:closed',
-  ROOM_PLAYER_JOINED: 'room:playerJoined',
-  ROOM_PLAYER_LEFT: 'room:playerLeft',
-  ROOM_KICKED: 'room:kicked',
-  SESSION_REPLACED: 'session:replaced',
-  GAME_SNAPSHOT: 'game:snapshot',
-  GAME_CUE: 'game:cue',
-  GAME_STATE: 'game:state',
-  GAME_TURN_STARTED: 'game:turnStarted',
-  GAME_CARDS_PLAYED: 'game:cardsPlayed',
-  GAME_CHALLENGE_STARTED: 'game:challengeStarted',
-  GAME_CHALLENGE_RESULT: 'game:challengeResult',
-  GAME_PUNISHMENT_STARTED: 'game:punishmentStarted',
-  GAME_PUNISHMENT_RESULT: 'game:punishmentResult',
-  GAME_PLAYER_ELIMINATED: 'game:playerEliminated',
-  GAME_OVER: 'game:over',
-  GAME_EMOTE: 'game:emote',
-} as const
+export class ServerEvents {
+  static readonly ROOM_STATE: string = 'room:state'
+  static readonly ROOM_CLOSED: string = 'room:closed'
+  static readonly ROOM_PLAYER_JOINED: string = 'room:playerJoined'
+  static readonly ROOM_PLAYER_LEFT: string = 'room:playerLeft'
+  static readonly ROOM_KICKED: string = 'room:kicked'
+  static readonly SESSION_REPLACED: string = 'session:replaced'
+  static readonly GAME_SNAPSHOT: string = 'game:snapshot'
+  static readonly GAME_CUE: string = 'game:cue'
+  static readonly GAME_STATE: string = 'game:state'
+  static readonly GAME_TURN_STARTED: string = 'game:turnStarted'
+  static readonly GAME_CARDS_PLAYED: string = 'game:cardsPlayed'
+  static readonly GAME_CHALLENGE_STARTED: string = 'game:challengeStarted'
+  static readonly GAME_CHALLENGE_RESULT: string = 'game:challengeResult'
+  static readonly GAME_PUNISHMENT_STARTED: string = 'game:punishmentStarted'
+  static readonly GAME_PUNISHMENT_RESULT: string = 'game:punishmentResult'
+  static readonly GAME_PLAYER_ELIMINATED: string = 'game:playerEliminated'
+  static readonly GAME_OVER: string = 'game:over'
+  static readonly GAME_EMOTE: string = 'game:emote'
+}

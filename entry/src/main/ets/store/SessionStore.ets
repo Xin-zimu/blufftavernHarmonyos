@@ -83,9 +83,9 @@ export class SessionStore {
 
   // 当前屏幕路由（替代 React 条件渲染）
   get currentScreen(): string {
-    if (this.room && this.game && this.room.status !== 'LOBBY') {
+    if (this.room !== null && this.game !== null && this.room.status !== 'LOBBY') {
       return 'game'
-    } else if (this.room) {
+    } else if (this.room !== null) {
       return 'lobby'
     } else {
       return 'home'

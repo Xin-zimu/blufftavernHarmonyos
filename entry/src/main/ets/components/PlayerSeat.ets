@@ -1,6 +1,7 @@
 // 玩家座位组件 - 显示单个玩家的信息
 
 import { PublicPlayerState } from '../model/GameTypes'
+import { getCharacterIdleImage } from '../utils/ArtResources'
 
 @Component
 export struct PlayerSeat {
@@ -13,8 +14,8 @@ export struct PlayerSeat {
     Column() {
       // 角色头像
       Stack() {
-        if (this.characterId) {
-          Image($r(`app.media.character_${this.characterId.toLowerCase()}_idle`))
+        if (this.characterId.length > 0) {
+          Image(getCharacterIdleImage(this.characterId))
             .width(48)
             .height(48)
             .borderRadius(24)
@@ -37,10 +38,10 @@ export struct PlayerSeat {
 
         // 淘汰标记
         if (!this.player.alive) {
-          Circle()
+          Column()
             .width(48)
             .height(48)
-            .fill('#000000')
+            .backgroundColor('#000000')
             .opacity(0.6)
             .borderRadius(24)
         }

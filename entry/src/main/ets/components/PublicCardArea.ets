@@ -24,14 +24,14 @@ export struct PublicCardArea {
       .margin({ bottom: 8 })
 
       // 上家声明
-      if (this.lastPlay) {
+      if (this.lastPlay !== null) {
         Row() {
           Text('上家声明:')
             .fontSize(12)
             .fontColor('#888899')
             .margin({ right: 8 })
 
-          // 声称的牌面（始终显示为 targetRank）
+          // 声称的牌面
           Text(`${this.lastPlay.count}张 ${this.lastPlay.claimedRank}`)
             .fontSize(16)
             .fontColor('#D4A574')
@@ -40,7 +40,7 @@ export struct PublicCardArea {
           // 牌背图标
           Row() {
             ForEach([1, 2, 3], (i: number) => {
-              if (i <= this.lastPlay!.count) {
+              if (i <= this.lastPlay?.count) {
                 Column() {
                   Text('?')
                     .fontSize(14)

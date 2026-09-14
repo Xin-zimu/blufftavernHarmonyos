@@ -10,6 +10,14 @@ export struct CardHand {
   @Prop disabled: boolean = false
   onCardSelect: (index: number) => void = () => {}
 
+  // 检查某张牌是否被选中（@Builder 外的方法）
+  private isCardSelected(index: number): boolean {
+    for (const idx of this.selectedIndexes) {
+      if (idx === index) return true
+    }
+    return false
+  }
+
   build() {
     Row() {
       ForEach(this.hand, (card: CardRank, index: number) => {
@@ -22,8 +30,6 @@ export struct CardHand {
   }
 
   @Builder CardItem(card: CardRank, index: number) {
-    let isSelected: boolean = this.selectedIndexes.includes(index)
-
     Column() {
       // 牌面
       if (card === 'JOKER') {
@@ -62,10 +68,10 @@ export struct CardHand {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .borderRadius(8)
-    .backgroundColor(isSelected ? '#3A5A1E' : '#2A2A4E')
+    .backgroundColor(this.isCardSelected(index) ? '#3A5A1E' : '#2A2A4E')
     .border({
-      width: isSelected ? 2 : 1,
-      color: isSelected ? '#4CAF50' : '#444466',
+      width: this.isCardSelected(index) ? 2 : 1,
+      color: this.isCardSelected(index) ? '#4CAF50' : '#444466',
       style: BorderStyle.Solid
     })
     .margin({ left: 4, right: 4 })

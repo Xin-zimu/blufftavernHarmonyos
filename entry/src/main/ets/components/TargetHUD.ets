@@ -8,6 +8,14 @@ export struct TargetHUD {
   @Prop targetCard: TargetRank = 'A'
   @Prop roundNumber: number = 0
 
+  // 获取显示用的目标牌（@Builder 外方法）
+  private getDisplayRank(): string {
+    if (this.targetRank !== null) {
+      return this.targetRank
+    }
+    return this.targetCard
+  }
+
   build() {
     Row() {
       // 回合编号
@@ -29,7 +37,7 @@ export struct TargetHUD {
           .fontSize(10)
           .fontColor('#888899')
         Row() {
-          Text(this.targetRank ?? this.targetCard)
+          Text(this.getDisplayRank())
             .fontSize(28)
             .fontWeight(FontWeight.Bold)
             .fontColor('#D4A574')

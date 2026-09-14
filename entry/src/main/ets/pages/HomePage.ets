@@ -6,6 +6,14 @@ import { SocketManager } from '../net/SocketManager'
 import { validateNickname, validateRoomCode } from '../model/Protocol'
 import { MAX_NICKNAME_LENGTH, ROOM_CODE_LENGTH } from '../model/Constants'
 
+// 辅助函数：替代 ?? 操作符
+function getErrorOrDefault(error: string | undefined, defaultMsg: string): string {
+  if (error !== undefined && error !== null) {
+    return error
+  }
+  return defaultMsg
+}
+
 @Entry
 @Component
 struct HomePage {
@@ -117,7 +125,7 @@ struct HomePage {
           this.socketManager.createRoom(this.nickname, (success: boolean, error?: string) => {
             this.isProcessing = false
             if (!success) {
-              this.errorMessage = error ?? '创建房间失败'
+              this.errorMessage = getErrorOrDefault(error, '创建房间失败')
             }
           })
         })
@@ -172,7 +180,7 @@ struct HomePage {
           this.socketManager.joinRoom(this.nickname, this.roomCode, (success: boolean, error?: string) => {
             this.isProcessing = false
             if (!success) {
-              this.errorMessage = error ?? '加入房间失败'
+              this.errorMessage = getErrorOrDefault(error, '加入房间失败')
             }
           })
         })
