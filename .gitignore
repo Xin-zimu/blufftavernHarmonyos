@@ -9,6 +9,7 @@ build/
 .output/
 .entry_modules/
 .cache/
+.preview/
 local.properties
 
 # OS
