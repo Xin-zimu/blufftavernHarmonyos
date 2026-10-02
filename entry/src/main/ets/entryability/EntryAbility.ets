@@ -4,18 +4,19 @@ import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit'
 import { window } from '@kit.ArkUI'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { common } from '@kit.AbilityKit'
-import { SessionStore } from '../store/SessionStore'
+import { SessionStore, globalSessionStore } from '../store/SessionStore'
 import { SocketManager } from '../net/SocketManager'
 import { AudioManager } from '../audio/AudioManager'
 
 export default class EntryAbility extends UIAbility {
-  private sessionStore: SessionStore = new SessionStore()
+  private sessionStore: SessionStore = globalSessionStore
   private socketManager: SocketManager = new SocketManager(this.sessionStore)
   private audioManager: AudioManager = new AudioManager()
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     // 初始化全局状态
-    AppStorage.setOrCreate<SessionStore>('sessionStore', this.sessionStore)
+    // 注意：SessionStore 是 @ObservedV2 类，禁止存入 V1 AppStorage（运行时会崩溃），
+    // 页面通过 store/SessionStore.ets 的 globalSessionStore 单例共享
     AppStorage.setOrCreate<SocketManager>('socketManager', this.socketManager)
     AppStorage.setOrCreate<AudioManager>('audioManager', this.audioManager)
 
@@ -27,9 +28,9 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
-    // 设置横屏优先（游戏需要横屏）
+    // 设置竖屏
     windowStage.getMainWindow().then((mainWindow: window.Window) => {
-      mainWindow.setPreferredOrientation(window.Orientation.LANDSCAPE)
+      mainWindow.setPreferredOrientation(window.Orientation.PORTRAIT)
     })
 
     // 加载首页

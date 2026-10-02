@@ -1,7 +1,7 @@
 // 大厅页面 - 对应 LobbyScreen.tsx
 // 显示房间码、玩家列表、角色选择、准备/开始按钮
 
-import { SessionStore } from '../store/SessionStore'
+import { SessionStore, globalSessionStore } from '../store/SessionStore'
 import { SocketManager } from '../net/SocketManager'
 import { PlayerView, CharacterId } from '../model/GameTypes'
 import { CHARACTER_IDS, CHARACTER_NAMES, MAX_PLAYERS, MIN_PLAYERS } from '../model/Constants'
@@ -20,7 +20,7 @@ function getErrorOrDefault(error: string | undefined, defaultMsg: string): strin
 struct LobbyPage {
   // SessionStore 为 @ObservedV2 类，不可用 @StorageLink 持有（V1 装饰器限制），
   // 改为普通成员 + @Trace 属性级观察实现响应式
-  store: SessionStore = AppStorage.get<SessionStore>('sessionStore') ?? new SessionStore()
+  store: SessionStore = globalSessionStore
   @StorageLink('socketManager') socketManager: SocketManager = new SocketManager(new SessionStore())
   @State selectedCharacter: string = ''
   @State errorMessage: string = ''

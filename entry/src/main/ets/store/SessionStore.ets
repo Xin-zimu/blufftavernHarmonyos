@@ -128,3 +128,8 @@ export class SessionStore {
     return Math.ceil(remainingMs / 1000)
   }
 }
+
+// 全局单例：@ObservedV2 实例不允许存入 V1 AppStorage（API 26 运行时校验会崩溃），
+// 也不能提前使用 AppStorageV2（EntryAbility.onCreate 阶段 UI 尚未启动），
+// 因此用模块级单例在 EntryAbility 与各页面间共享同一个实例
+export const globalSessionStore: SessionStore = new SessionStore()

@@ -1,0 +1,24 @@
+{
+  "modulePathMap": {
+    "entry": "D:\\HUAWEI-DEV\\Bluff-Tavern-HARMONEYOS\\entry"
+  },
+  "compileMode": "esmodule",
+  "projectRootPath": "D:\\HUAWEI-DEV\\Bluff-Tavern-HARMONEYOS",
+  "nodeModulesPath": "D:\\HUAWEI-DEV\\Bluff-Tavern-HARMONEYOS\\entry\\.preview\\default\\intermediates\\loader_out\\default\\node_modules",
+  "byteCodeHarInfo": {},
+  "declarationEntry": [],
+  "moduleName": "entry",
+  "hspNameOhmMap": {},
+  "harNameOhmMap": {},
+  "packageManagerType": "ohpm",
+  "compileEntry": [],
+  "otherCompileFiles": [],
+  "dynamicImportLibInfo": {},
+  "routerMap": [],
+  "hspResourcesMap": {},
+  "updateVersionInfo": {},
+  "customizedHar": false,
+  "anBuildOutPut": "D:\\HUAWEI-DEV\\Bluff-Tavern-HARMONEYOS\\entry\\.preview\\default\\intermediates\\loader_out\\default\\an\\arm64-v8a",
+  "anBuildMode": "type",
+  "buildConfigPath": ".preview\\config\\buildConfig.json"
+}

@@ -1,7 +1,7 @@
 // 游戏主页面 - 对应 GameScreen.tsx
 // 最复杂的页面，包含 HUD、座位、手牌、操作按钮、演出层等
 
-import { SessionStore } from '../store/SessionStore'
+import { SessionStore, globalSessionStore } from '../store/SessionStore'
 import { SocketManager } from '../net/SocketManager'
 import {
   GameSnapshot, PublicPlayerState, GamePhase,
@@ -22,7 +22,7 @@ import { CinematicOverlay } from '../components/CinematicOverlay'
 struct GamePage {
   // SessionStore 为 @ObservedV2 类，不可用 @StorageLink 持有（V1 装饰器限制），
   // 改为普通成员 + @Trace 属性级观察实现响应式
-  store: SessionStore = AppStorage.get<SessionStore>('sessionStore') ?? new SessionStore()
+  store: SessionStore = globalSessionStore
   @StorageLink('socketManager') socketManager: SocketManager = new SocketManager(new SessionStore())
   @State selectedCardIndexes: number[] = []
   @State showRules: boolean = false
