@@ -2,7 +2,7 @@
   "module": {
     "name": "entry",
     "type": "entry",
-    "description": "诡牌酒馆 - Bluff Tavern 鸿蒙应用",
+    "description": "$string:module_desc",
     "mainElement": "EntryAbility",
     "deviceTypes": [
       "phone",
@@ -10,18 +10,14 @@
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
-    "pages": [
-      "pages/HomePage",
-      "pages/LobbyPage",
-      "pages/GamePage"
-    ],
+    "pages": "$profile:main_pages",
     "abilities": [
       {
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
-        "description": "诡牌酒馆主入口",
+        "description": "$string:EntryAbility_desc",
         "icon": "$media:app_icon",
-        "label": "诡牌酒馆",
+        "label": "$string:EntryAbility_label",
         "startWindowIcon": "$media:app_icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,

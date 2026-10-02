@@ -5,7 +5,5 @@
   "main": "",
   "author": "",
   "license": "Apache-2.0",
-  "dependencies": {
-    "socket.io-client": "^4.7.5"
-  }
+  "dependencies": {}
 }

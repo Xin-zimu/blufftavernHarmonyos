@@ -33,7 +33,7 @@ export default class EntryAbility extends UIAbility {
     })
 
     // 加载首页
-    windowStage.loadUIContent('pages/HomePage')
+    windowStage.loadContent('pages/HomePage')
   }
 
   onWindowStageDestroy(): void {

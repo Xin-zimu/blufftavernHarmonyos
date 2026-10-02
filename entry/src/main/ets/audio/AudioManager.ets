@@ -3,6 +3,7 @@
 // 或使用系统振动反馈作为替代方案
 
 import { media } from '@kit.MediaKit'
+import { audio } from '@kit.AudioKit'
 import { vibrator } from '@kit.SensorServiceKit'
 import { common } from '@kit.AbilityKit'
 
@@ -18,7 +19,11 @@ export class AudioManager {
     this.context = context
 
     try {
-      this.soundPool = await media.createSoundPool(10, media.SoundPoolType.STREAM_MUSIC)
+      const rendererInfo: audio.AudioRendererInfo = {
+        usage: audio.StreamUsage.STREAM_USAGE_MUSIC,
+        rendererFlags: 0
+      }
+      this.soundPool = await media.createSoundPool(10, rendererInfo)
       this.isInitialized = true
 
       // 加载预生成的音效文件
@@ -49,7 +54,11 @@ export class AudioManager {
 
     const rawFileDir = this.context.resourceDir + '/rawfile'
 
-    for (const [name, file] of soundFiles) {
+    for (const name of soundFiles.keys()) {
+      const file: string | undefined = soundFiles.get(name)
+      if (file === undefined) {
+        continue
+      }
       try {
         const filePath = rawFileDir + '/' + file
         const soundId = await this.soundPool.load(filePath)

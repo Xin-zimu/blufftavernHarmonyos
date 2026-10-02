@@ -1,8 +1,8 @@
 // Socket IO 网络管理器 - 对应 socket/client.ts + App.tsx 中的事件处理
-// 通过 npm 引入 socket.io-client
+// socket.io-client（npm 包）在 ohpm 不存在，暂以本地 stub（SocketIOStub.ets）替代
 // ArkTS 兼容版本：移除所有 as any，使用 ESObject 处理动态类型
 
-import { io, Socket } from 'socket.io-client'
+import { io, Socket } from './SocketIOStub'
 import { SessionStore } from '../store/SessionStore'
 import {
   RoomMembership, RoomView, GameSnapshot, GameCue,

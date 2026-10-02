@@ -9,14 +9,12 @@ export struct ConnectionBadge {
   private getStatusText(): string {
     if (this.status === 'connected') return '已连接'
     if (this.status === 'connecting') return '连接中...'
-    if (this.status === 'reconnecting') return '重连中...'
     return '已断开'
   }
 
   private getStatusColor(): string {
     if (this.status === 'connected') return '#4CAF50'
     if (this.status === 'connecting') return '#FFC107'
-    if (this.status === 'reconnecting') return '#FF9800'
     return '#F44336'
   }
 

@@ -17,7 +17,9 @@ function getErrorOrDefault(error: string | undefined, defaultMsg: string): strin
 @Entry
 @Component
 struct HomePage {
-  @StorageLink('sessionStore') store: SessionStore = new SessionStore()
+  // SessionStore 为 @ObservedV2 类，不可用 @StorageLink 持有（V1 装饰器限制），
+  // 改为普通成员 + @Trace 属性级观察实现响应式
+  store: SessionStore = AppStorage.get<SessionStore>('sessionStore') ?? new SessionStore()
   @StorageLink('socketManager') socketManager: SocketManager = new SocketManager(new SessionStore())
   @State nickname: string = ''
   @State roomCode: string = ''

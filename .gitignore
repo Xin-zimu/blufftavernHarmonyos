@@ -8,6 +8,8 @@ oh_modules/
 build/
 .output/
 .entry_modules/
+.cache/
+local.properties
 
 # OS
 .DS_Store

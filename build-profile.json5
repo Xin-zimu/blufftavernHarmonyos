@@ -5,7 +5,8 @@
       {
         "name": "default",
         "signingConfig": "",
-        "compatibleSdkVersion": "5.0.0(12)",
+        "targetSdkVersion": "26.0.0",
+        "compatibleSdkVersion": "26.0.0",
         "runtimeOS": "HarmonyOS"
       }
     ],

@@ -40,7 +40,7 @@ export struct PublicCardArea {
           // 牌背图标
           Row() {
             ForEach([1, 2, 3], (i: number) => {
-              if (i <= this.lastPlay?.count) {
+              if (this.lastPlay !== null && i <= this.lastPlay.count) {
                 Column() {
                   Text('?')
                     .fontSize(14)
