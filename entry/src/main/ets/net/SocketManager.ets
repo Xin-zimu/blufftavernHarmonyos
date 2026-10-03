@@ -1,14 +1,18 @@
-// Socket IO 网络管理器 - 对应 socket/client.ts + App.tsx 中的事件处理
-// socket.io-client（npm 包）在 ohpm 不存在，暂以本地 stub（SocketIOStub.ets）替代
-// ArkTS 兼容版本：移除所有 as any，使用 ESObject 处理动态类型
+// 实时通信管理器 - 对应 web 端 socket/client.ts + App.tsx 事件处理
+// 基于 /ws 原生 WebSocket 传输（WsTransport），协议与服务端 command-dispatcher 对齐
+// 处理：连接生命周期、会话恢复、房间/游戏命令、推送事件解析、快照序列去重
 
-import { io, Socket } from './SocketIOStub'
+import { WsTransport } from './WsTransport'
 import { SessionStore } from '../store/SessionStore'
+import { SessionPersistence } from '../store/SessionPersistence'
 import {
-  RoomMembership, RoomView, GameSnapshot, GameCue,
-  RoomPlayerEvent, SessionResumeResult, AckResult, AckError,
-  ConnectionStatus, GameView
+  RoomView, GameSnapshot, GameCue,
+  SessionResumeResult, AckResult
 } from '../model/GameTypes'
+import {
+  parseRoomView, parseRoomMembership, parseSessionResumeResult,
+  parseGameSnapshot, parseGameCue
+} from '../model/Parsers'
 import {
   CreateRoomPayload, JoinRoomPayload, LeaveRoomPayload,
   ReadyRoomPayload, UpdateRoomSettingsPayload, KickPlayerPayload,
@@ -16,11 +20,15 @@ import {
   RestartGamePayload, ReturnToRoomPayload, ResumeSessionPayload,
   SelectCharacterPayload, SendEmotePayload,
   validateNickname, validateRoomCode, validateCardIndexes,
-  ClientEvents, ServerEvents
+  makeErrorAck, ClientEvents, ServerEvents
 } from '../model/Protocol'
 import { V6GameMode, CharacterId, EmoteId } from '../model/GameTypes'
+import { hilog } from '@kit.PerformanceAnalysisKit'
 
-// 生成 UUID (用于 requestId)
+const DOMAIN: number = 0x0000
+const TAG: string = 'SocketManager'
+
+// 生成 UUID (用于 requestId，服务端要求 uuid 格式)
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c: string): string => {
     const r: number = Math.floor(Math.random() * 16)
@@ -29,148 +37,128 @@ function generateUUID(): string {
   })
 }
 
-// 辅助函数：替代 ?? 操作符（ArkTS 不支持 ??）
-function getErrorMessage(error: AckError | null, defaultMsg: string): string {
-  if (error !== null && error.message !== null && error.message.length > 0) {
-    return error.message
+// 辅助函数：从 AckError 提取可读信息
+function getErrorMessage(error: AckResult, defaultMsg: string): string {
+  if (error.error !== null && error.error.message.length > 0) {
+    return error.error.message
   }
   return defaultMsg
 }
 
 export class SocketManager {
-  private socket: Socket | null = null
+  private transport: WsTransport | null = null
   private store: SessionStore
+  private persistence: SessionPersistence
   private serverUrl: string = ''
+  // 最近应用的快照序列号；服务端每局游戏重置序列，因此开局/重启/返回大厅/恢复会话时需重置
+  private lastSequence: number = -1
 
-  constructor(store: SessionStore) {
+  constructor(store: SessionStore, persistence: SessionPersistence) {
     this.store = store
+    this.persistence = persistence
   }
 
   // ====== 连接管理 ======
 
   connect(serverUrl: string): void {
     this.serverUrl = serverUrl
+    if (this.transport !== null) {
+      if (this.transport.isConnected() || this.transport.isConnecting()) {
+        return
+      }
+      this.transport.disconnect()
+    }
+    const transport: WsTransport = new WsTransport(
+      (event: string, payload: ESObject): void => {
+        this.handlePush(event, payload)
+      },
+      (): void => {
+        this.handleOpen()
+      },
+      (willReconnect: boolean): void => {
+        this.handleClose(willReconnect)
+      }
+    )
+    this.transport = transport
     this.store.setConnection('connecting')
-
-    this.socket = io(serverUrl, {
-      autoConnect: false,
-      reconnection: true,
-      reconnectionDelay: 500,
-      reconnectionDelayMax: 4000,
-      randomizationFactor: 0.2,
-      transports: ['websocket'],
-    })
-
-    this.registerEventHandlers()
-    this.socket.connect()
+    transport.connect(serverUrl)
   }
 
   disconnect(): void {
-    if (this.socket) {
-      this.socket.disconnect()
-      this.socket = null
+    if (this.transport !== null) {
+      this.transport.disconnect()
+      this.transport = null
     }
     this.store.setConnection('disconnected')
   }
 
   isConnected(): boolean {
-    return this.socket !== null && this.socket.connected
+    return this.transport !== null && this.transport.isConnected()
   }
 
-  // ====== 事件处理器注册 ======
+  // ====== 连接回调 ======
 
-  private registerEventHandlers(): void {
-    if (!this.socket) return
+  private handleOpen(): void {
+    this.store.setConnection('connected')
+    this.tryResumeSession()
+  }
 
-    // 连接事件
-    this.socket.on('connect', () => {
-      this.store.setConnection('connected')
-      this.tryResumeSession()
-    })
+  private handleClose(willReconnect: boolean): void {
+    this.store.setConnection(willReconnect ? 'connecting' : 'disconnected')
+  }
 
-    this.socket.on('disconnect', () => {
-      this.store.setConnection('disconnected')
-    })
+  // ====== 推送事件处理 ======
 
-    this.socket.on('connect_error', () => {
-      this.store.setConnection('connecting')
-    })
-
-    // 房间事件
-    this.socket.on(ServerEvents.ROOM_STATE, (room: RoomView) => {
-      this.store.updateRoom(room)
-    })
-
-    this.socket.on(ServerEvents.ROOM_CLOSED, () => {
-      this.store.leaveRoom()
-      this.store.setNotice('房间已关闭')
-    })
-
-    this.socket.on(ServerEvents.ROOM_PLAYER_JOINED, (event: RoomPlayerEvent) => {
-      // 玩家加入通知，room:state 会携带最新房间状态
-    })
-
-    this.socket.on(ServerEvents.ROOM_PLAYER_LEFT, (event: RoomPlayerEvent) => {
-      // 玩家离开通知
-    })
-
-    this.socket.on(ServerEvents.ROOM_KICKED, (message: string) => {
-      this.store.leaveRoom()
-      this.store.setNotice(message)
-    })
-
-    this.socket.on(ServerEvents.SESSION_REPLACED, (message: string) => {
-      this.store.setNotice(message)
-    })
-
-    // 游戏事件
-    this.socket.on(ServerEvents.GAME_SNAPSHOT, (state: GameSnapshot) => {
-      this.store.setGame(state)
-    })
-
-    this.socket.on(ServerEvents.GAME_CUE, (cue: GameCue) => {
-      this.handleGameCue(cue)
-    })
-
-    this.socket.on(ServerEvents.GAME_STATE, (state: GameSnapshot) => {
-      this.store.setGame(state)
-    })
-
-    this.socket.on(ServerEvents.GAME_TURN_STARTED, (state: GameSnapshot) => {
-      this.store.setGame(state)
-    })
-
-    this.socket.on(ServerEvents.GAME_CARDS_PLAYED, (event: ESObject) => {
-      // 出牌通知
-    })
-
-    this.socket.on(ServerEvents.GAME_CHALLENGE_STARTED, (event: ESObject) => {
-      // 质疑开始通知
-    })
-
-    this.socket.on(ServerEvents.GAME_CHALLENGE_RESULT, (state: GameSnapshot) => {
-      this.store.setGame(state)
-    })
-
-    this.socket.on(ServerEvents.GAME_PUNISHMENT_STARTED, (event: ESObject) => {
-      // 惩罚开始通知
-    })
-
-    this.socket.on(ServerEvents.GAME_PUNISHMENT_RESULT, (state: GameSnapshot) => {
-      this.store.setGame(state)
-    })
-
-    this.socket.on(ServerEvents.GAME_PLAYER_ELIMINATED, (event: ESObject) => {
-      // 玩家淘汰通知
-    })
-
-    this.socket.on(ServerEvents.GAME_OVER, (state: GameSnapshot) => {
-      this.store.setGame(state)
-    })
-
-    this.socket.on(ServerEvents.GAME_EMOTE, (event: ESObject) => {
-      // 表情通知
-    })
+  private handlePush(event: string, payload: ESObject): void {
+    switch (event) {
+      case ServerEvents.ROOM_STATE: {
+        const room: RoomView | null = parseRoomView(payload)
+        if (room !== null) {
+          this.store.updateRoom(room)
+        }
+        break
+      }
+      case ServerEvents.ROOM_CLOSED:
+        this.resetGameTracking()
+        this.store.leaveRoom()
+        this.store.setNotice('房间已关闭')
+        break
+      case ServerEvents.ROOM_KICKED: {
+        const message: string = typeof payload === 'string' ? payload : '你已被移出房间'
+        this.resetGameTracking()
+        this.store.leaveRoom()
+        this.store.setNotice(message)
+        break
+      }
+      case ServerEvents.SESSION_REPLACED: {
+        const message: string = typeof payload === 'string' ? payload : '你的会话已在新连接中恢复'
+        this.store.setNotice(message)
+        break
+      }
+      case ServerEvents.GAME_SNAPSHOT:
+      case ServerEvents.GAME_STATE:
+      case ServerEvents.GAME_TURN_STARTED:
+      case ServerEvents.GAME_CHALLENGE_RESULT:
+      case ServerEvents.GAME_PUNISHMENT_RESULT:
+      case ServerEvents.GAME_OVER: {
+        const snapshot: GameSnapshot | null = parseGameSnapshot(payload)
+        if (snapshot !== null) {
+          this.applyGameSnapshot(snapshot)
+        }
+        break
+      }
+      case ServerEvents.GAME_CUE: {
+        const cue: GameCue | null = parseGameCue(payload)
+        if (cue !== null) {
+          this.handleGameCue(cue)
+        }
+        break
+      }
+      default:
+        // room:playerJoined / room:playerLeft / game:cardsPlayed 等通知事件：
+        // 状态已由 room:state / game:snapshot 推送覆盖
+        break
+    }
   }
 
   // ====== 游戏事件提示处理 ======
@@ -178,32 +166,73 @@ export class SocketManager {
   private handleGameCue(cue: GameCue): void {
     // 根据 cue.type 触发声效或 UI 反馈
     // 后续与 AudioManager 集成
+    hilog.info(DOMAIN, TAG, `game cue: ${cue.type} seq=${cue.sequence}`)
+  }
+
+  // ====== 快照序列去重 ======
+
+  private applyGameSnapshot(snapshot: GameSnapshot): void {
+    if (snapshot.sequence < this.lastSequence) {
+      // 丢弃过期快照（乱序到达的旧状态）
+      return
+    }
+    this.lastSequence = snapshot.sequence
+    this.store.setGame(snapshot)
+  }
+
+  private resetGameTracking(): void {
+    this.lastSequence = -1
   }
 
   // ====== 会话恢复 ======
 
   private tryResumeSession(): void {
-    if (!this.socket || !this.store.sessionToken) return
+    const token: string | null = this.store.sessionToken
+    if (token === null || token.length === 0) return
 
     const payload: ResumeSessionPayload = new ResumeSessionPayload()
-    payload.sessionToken = this.store.sessionToken
+    payload.sessionToken = token
 
-    this.socket.emit(ClientEvents.SESSION_RESUME, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.SESSION_RESUME, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as SessionResumeResult
-        this.store.enterRoom(data.room, data.playerId, data.sessionToken)
-        if (data.game) {
-          this.store.setGame(data.game)
+        const data: SessionResumeResult | null = parseSessionResumeResult(result.data)
+        if (data !== null) {
+          this.store.enterRoom(data.room, data.playerId, data.sessionToken)
+          this.persistence.saveToken(data.sessionToken)
+          this.resetGameTracking()
+          if (data.game !== null) {
+            this.applyGameSnapshot(data.game)
+          }
+          hilog.info(DOMAIN, TAG, `session resumed: room=${data.room.code}`)
         }
+      } else {
+        // 会话已失效（房间关闭/令牌过期）：清除本地令牌，用户需重新加入
+        hilog.warn(DOMAIN, TAG, `session resume failed: ${result.error.code}`)
+        this.store.sessionToken = null
+        this.persistence.clearToken()
       }
     })
+  }
+
+  // ====== 命令发送辅助 ======
+
+  private sendCommand(event: string, payload: ESObject, callback?: (result: AckResult) => void): void {
+    const transport: WsTransport | null = this.transport
+    if (transport === null || !transport.isConnected()) {
+      if (callback !== undefined) {
+        callback(makeErrorAck('NOT_CONNECTED', '未连接到服务器'))
+      }
+      return
+    }
+    transport.send(event, payload, callback)
   }
 
   // ====== 客户端操作方法 ======
 
   // 创建房间
   createRoom(nickname: string, callback?: (success: boolean, error?: string) => void): void {
-    if (!this.socket || !validateNickname(nickname)) {
+    if (!this.ensureConnected(callback)) return
+    if (!validateNickname(nickname)) {
       if (callback) callback(false, '昵称无效')
       return
     }
@@ -211,21 +240,28 @@ export class SocketManager {
     const payload: CreateRoomPayload = new CreateRoomPayload()
     payload.nickname = nickname.trim()
 
-    this.socket.emit(ClientEvents.ROOM_CREATE, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.ROOM_CREATE, payload, (result: AckResult) => {
+      hilog.info(DOMAIN, TAG, `createRoom ack received, ok=${result.ok}`)
       if (result.ok) {
-        const data = result.data as RoomMembership
-        this.store.enterRoom(data.room, data.playerId, data.sessionToken)
-        if (callback) callback(true)
+        const membership = parseRoomMembership(result.data)
+        hilog.info(DOMAIN, TAG, `createRoom membership parse: ${membership === null ? 'null' : membership.room.code}`)
+        if (membership !== null) {
+          this.store.enterRoom(membership.room, membership.playerId, membership.sessionToken)
+          this.persistence.saveToken(membership.sessionToken)
+          if (callback) callback(true)
+        } else {
+          if (callback) callback(false, '服务器响应异常')
+        }
       } else {
-        const errMsg = getErrorMessage(result.error, '创建房间失败')
-        if (callback) callback(false, errMsg)
+        if (callback) callback(false, getErrorMessage(result, '创建房间失败'))
       }
     })
   }
 
   // 加入房间
   joinRoom(nickname: string, roomCode: string, callback?: (success: boolean, error?: string) => void): void {
-    if (!this.socket || !validateNickname(nickname)) {
+    if (!this.ensureConnected(callback)) return
+    if (!validateNickname(nickname)) {
       if (callback) callback(false, '昵称无效')
       return
     }
@@ -238,21 +274,25 @@ export class SocketManager {
     payload.nickname = nickname.trim()
     payload.roomCode = roomCode.trim().toUpperCase()
 
-    this.socket.emit(ClientEvents.ROOM_JOIN, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.ROOM_JOIN, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as RoomMembership
-        this.store.enterRoom(data.room, data.playerId, data.sessionToken)
-        if (callback) callback(true)
+        const membership = parseRoomMembership(result.data)
+        if (membership !== null) {
+          this.store.enterRoom(membership.room, membership.playerId, membership.sessionToken)
+          this.persistence.saveToken(membership.sessionToken)
+          if (callback) callback(true)
+        } else {
+          if (callback) callback(false, '服务器响应异常')
+        }
       } else {
-        const errMsg = getErrorMessage(result.error, '加入房间失败')
-        if (callback) callback(false, errMsg)
+        if (callback) callback(false, getErrorMessage(result, '加入房间失败'))
       }
     })
   }
 
-  // 离开房间
+  // 离开房间（仅在服务端确认成功后清除本地房间状态）
   leaveRoom(callback?: (success: boolean) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false)
       return
     }
@@ -260,15 +300,21 @@ export class SocketManager {
     const payload: LeaveRoomPayload = new LeaveRoomPayload()
     payload.roomCode = this.store.room.code
 
-    this.socket.emit(ClientEvents.ROOM_LEAVE, payload, () => {
-      this.store.leaveRoom()
-      if (callback) callback(true)
+    this.sendCommand(ClientEvents.ROOM_LEAVE, payload, (result: AckResult) => {
+      if (result.ok) {
+        this.resetGameTracking()
+        this.store.leaveRoom()
+        this.persistence.clearToken()
+        if (callback) callback(true)
+      } else {
+        if (callback) callback(false)
+      }
     })
   }
 
   // 准备/取消准备
   setReady(ready: boolean, callback?: (success: boolean) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false)
       return
     }
@@ -278,10 +324,12 @@ export class SocketManager {
     payload.ready = ready
     payload.requestId = generateUUID()
 
-    this.socket.emit(ClientEvents.ROOM_READY, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.ROOM_READY, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as RoomView
-        this.store.updateRoom(data)
+        const room: RoomView | null = parseRoomView(result.data)
+        if (room !== null) {
+          this.store.updateRoom(room)
+        }
         if (callback) callback(true)
       } else {
         if (callback) callback(false)
@@ -289,9 +337,9 @@ export class SocketManager {
     })
   }
 
-  // 更新房间设置
+  // 更新房间设置（仅 maxPlayers / gameMode）
   updateSettings(maxPlayers: number, gameMode: string, callback?: (success: boolean) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false)
       return
     }
@@ -302,10 +350,12 @@ export class SocketManager {
     payload.gameMode = gameMode as V6GameMode
     payload.requestId = generateUUID()
 
-    this.socket.emit(ClientEvents.ROOM_UPDATE_SETTINGS, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.ROOM_UPDATE_SETTINGS, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as RoomView
-        this.store.updateRoom(data)
+        const room: RoomView | null = parseRoomView(result.data)
+        if (room !== null) {
+          this.store.updateRoom(room)
+        }
         if (callback) callback(true)
       } else {
         if (callback) callback(false)
@@ -315,7 +365,7 @@ export class SocketManager {
 
   // 踢出玩家
   kickPlayer(targetPlayerId: string, callback?: (success: boolean) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false)
       return
     }
@@ -325,10 +375,12 @@ export class SocketManager {
     payload.targetPlayerId = targetPlayerId
     payload.requestId = generateUUID()
 
-    this.socket.emit(ClientEvents.ROOM_KICK, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.ROOM_KICK, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as RoomView
-        this.store.updateRoom(data)
+        const room: RoomView | null = parseRoomView(result.data)
+        if (room !== null) {
+          this.store.updateRoom(room)
+        }
         if (callback) callback(true)
       } else {
         if (callback) callback(false)
@@ -338,7 +390,7 @@ export class SocketManager {
 
   // 选择角色
   selectCharacter(characterId: string, callback?: (success: boolean) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false)
       return
     }
@@ -347,10 +399,12 @@ export class SocketManager {
     payload.roomCode = this.store.room.code
     payload.characterId = characterId as CharacterId
 
-    this.socket.emit(ClientEvents.ROOM_SELECT_CHARACTER, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.ROOM_SELECT_CHARACTER, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as RoomView
-        this.store.updateRoom(data)
+        const room: RoomView | null = parseRoomView(result.data)
+        if (room !== null) {
+          this.store.updateRoom(room)
+        }
         if (callback) callback(true)
       } else {
         if (callback) callback(false)
@@ -360,7 +414,7 @@ export class SocketManager {
 
   // 开始游戏
   startGame(callback?: (success: boolean, error?: string) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false, '未在房间中')
       return
     }
@@ -369,21 +423,23 @@ export class SocketManager {
     payload.roomCode = this.store.room.code
     payload.requestId = generateUUID()
 
-    this.socket.emit(ClientEvents.GAME_START, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.GAME_START, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as GameSnapshot
-        this.store.setGame(data)
+        this.resetGameTracking()
+        const snapshot: GameSnapshot | null = parseGameSnapshot(result.data)
+        if (snapshot !== null) {
+          this.applyGameSnapshot(snapshot)
+        }
         if (callback) callback(true)
       } else {
-        const errMsg = getErrorMessage(result.error, '开始游戏失败')
-        if (callback) callback(false, errMsg)
+        if (callback) callback(false, getErrorMessage(result, '开始游戏失败'))
       }
     })
   }
 
   // 出牌
   playCards(cardIndexes: number[], callback?: (success: boolean, error?: string) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false, '未在房间中')
       return
     }
@@ -397,21 +453,22 @@ export class SocketManager {
     payload.cardIndexes = cardIndexes
     payload.requestId = generateUUID()
 
-    this.socket.emit(ClientEvents.GAME_PLAY_CARDS, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.GAME_PLAY_CARDS, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as GameSnapshot
-        this.store.setGame(data)
+        const snapshot: GameSnapshot | null = parseGameSnapshot(result.data)
+        if (snapshot !== null) {
+          this.applyGameSnapshot(snapshot)
+        }
         if (callback) callback(true)
       } else {
-        const errMsg = getErrorMessage(result.error, '出牌失败')
-        if (callback) callback(false, errMsg)
+        if (callback) callback(false, getErrorMessage(result, '出牌失败'))
       }
     })
   }
 
   // 质疑
   challenge(callback?: (success: boolean, error?: string) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false, '未在房间中')
       return
     }
@@ -420,21 +477,22 @@ export class SocketManager {
     payload.roomCode = this.store.room.code
     payload.requestId = generateUUID()
 
-    this.socket.emit(ClientEvents.GAME_CHALLENGE, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.GAME_CHALLENGE, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as GameSnapshot
-        this.store.setGame(data)
+        const snapshot: GameSnapshot | null = parseGameSnapshot(result.data)
+        if (snapshot !== null) {
+          this.applyGameSnapshot(snapshot)
+        }
         if (callback) callback(true)
       } else {
-        const errMsg = getErrorMessage(result.error, '质疑失败')
-        if (callback) callback(false, errMsg)
+        if (callback) callback(false, getErrorMessage(result, '质疑失败'))
       }
     })
   }
 
   // 重新开始
   restartGame(callback?: (success: boolean) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false)
       return
     }
@@ -443,10 +501,13 @@ export class SocketManager {
     payload.roomCode = this.store.room.code
     payload.requestId = generateUUID()
 
-    this.socket.emit(ClientEvents.GAME_RESTART, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.GAME_RESTART, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as GameSnapshot
-        this.store.setGame(data)
+        this.resetGameTracking()
+        const snapshot: GameSnapshot | null = parseGameSnapshot(result.data)
+        if (snapshot !== null) {
+          this.applyGameSnapshot(snapshot)
+        }
         if (callback) callback(true)
       } else {
         if (callback) callback(false)
@@ -456,7 +517,7 @@ export class SocketManager {
 
   // 返回大厅
   returnToRoom(callback?: (success: boolean) => void): void {
-    if (!this.socket || !this.store.room) {
+    if (!this.store.room) {
       if (callback) callback(false)
       return
     }
@@ -465,11 +526,14 @@ export class SocketManager {
     payload.roomCode = this.store.room.code
     payload.requestId = generateUUID()
 
-    this.socket.emit(ClientEvents.GAME_RETURN_TO_ROOM, payload, (result: AckResult) => {
+    this.sendCommand(ClientEvents.GAME_RETURN_TO_ROOM, payload, (result: AckResult) => {
       if (result.ok) {
-        const data = result.data as RoomView
+        this.resetGameTracking()
         this.store.clearGame()
-        this.store.updateRoom(data)
+        const room: RoomView | null = parseRoomView(result.data)
+        if (room !== null) {
+          this.store.updateRoom(room)
+        }
         if (callback) callback(true)
       } else {
         if (callback) callback(false)
@@ -479,12 +543,23 @@ export class SocketManager {
 
   // 发送表情
   sendEmote(emoteId: string): void {
-    if (!this.socket || !this.store.room) return
+    if (!this.store.room) return
 
     const payload: SendEmotePayload = new SendEmotePayload()
     payload.roomCode = this.store.room.code
     payload.emoteId = emoteId as EmoteId
 
-    this.socket.emit(ClientEvents.GAME_SEND_EMOTE, payload)
+    this.sendCommand(ClientEvents.GAME_SEND_EMOTE, payload)
+  }
+
+  // ====== 内部辅助 ======
+
+  // 连接守卫：未连接时直接回调失败（此时不做昵称等参数校验）
+  private ensureConnected(callback?: (success: boolean, error?: string) => void): boolean {
+    if (this.transport === null || !this.transport.isConnected()) {
+      if (callback) callback(false, '未连接到服务器')
+      return false
+    }
+    return true
   }
 }

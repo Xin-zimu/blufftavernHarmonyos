@@ -5,7 +5,7 @@
 import {
   RoomMembership, RoomView, GameView, GameSnapshot, GameCue,
   RoomPlayerEvent, SessionResumeResult, CharacterId, EmoteId, ItemId,
-  GameMode, V6GameMode
+  GameMode, V6GameMode, AckResult, AckError
 } from './GameTypes'
 import {
   ROOM_CODE_LENGTH, ROOM_CODE_ALPHABET, MIN_NICKNAME_LENGTH,
@@ -30,8 +30,22 @@ export function validateRoomCode(code: string): boolean {
 
 export function validateCardIndexes(indexes: number[]): boolean {
   if (indexes.length < 1 || indexes.length > MAX_CARDS_PER_PLAY) return false
+  for (const index of indexes) {
+    if (!Number.isInteger(index) || index < 0) return false
+  }
   const set = new Set<number>(indexes)
   return set.size === indexes.length
+}
+
+// 构造失败的 Ack 结果（未连接 / 超时 / 断开等本地错误）
+export function makeErrorAck(code: string, message: string): AckResult {
+  const ackError: AckError = new AckError()
+  ackError.code = code
+  ackError.message = message
+  const result: AckResult = new AckResult()
+  result.ok = false
+  result.error = ackError
+  return result
 }
 
 // ====== 客户端 -> 服务端事件 payload 类型 ======
@@ -55,13 +69,13 @@ export class ReadyRoomPayload {
   requestId: string = ''
 }
 
+// 注意：服务端 schema 中 turnDurationSeconds / eventEnabled / bulletCount / v7
+// 均为 optional（非 nullable），显式发送 null 会被 zod 拒绝。
+// 本客户端仅更新 maxPlayers / gameMode，未设置的可选字段一律不发送。
 export class UpdateRoomSettingsPayload {
   roomCode: string = ''
   maxPlayers: number = 8
   gameMode: V6GameMode = 'CLASSIC'
-  turnDurationSeconds: number | null = null
-  eventEnabled: boolean | null = null
-  bulletCount: number | null = null
   requestId: string = ''
 }
 

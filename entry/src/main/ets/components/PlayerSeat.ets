@@ -57,18 +57,25 @@ export struct PlayerSeat {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .constraintSize({ maxWidth: 80 })
 
-      // 手牌数
+      // 手牌数（其他玩家的手牌数可能被隐藏，此时显示 ?）
       if (this.player.alive) {
-        Row() {
-          ForEach([1, 2, 3, 4, 5], (i: number) => {
-            Circle()
-              .width(6)
-              .height(6)
-              .fill(i <= this.player.cardCount ? '#D4A574' : '#2A2A4E')
-              .margin({ left: 2, right: 2 })
-          })
+        if (this.player.cardCount !== null) {
+          Row() {
+            ForEach([1, 2, 3, 4, 5], (i: number) => {
+              Circle()
+                .width(6)
+                .height(6)
+                .fill(i <= (this.player.cardCount ?? 0) ? '#D4A574' : '#2A2A4E')
+                .margin({ left: 2, right: 2 })
+            })
+          }
+          .height(8)
+        } else {
+          Text('?')
+            .fontSize(10)
+            .fontColor('#8888A0')
+            .height(8)
         }
-        .height(8)
       }
 
       // 离线标记

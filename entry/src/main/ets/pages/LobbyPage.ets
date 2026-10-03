@@ -2,7 +2,11 @@
 // 显示房间码、玩家列表、角色选择、准备/开始按钮
 
 import { SessionStore, globalSessionStore } from '../store/SessionStore'
+import { SessionPersistence } from '../store/SessionPersistence'
 import { SocketManager } from '../net/SocketManager'
+import { router } from '@kit.ArkUI'
+import { hilog } from '@kit.PerformanceAnalysisKit'
+import { BusinessError } from '@kit.BasicServicesKit'
 import { PlayerView, CharacterId } from '../model/GameTypes'
 import { CHARACTER_IDS, CHARACTER_NAMES, MAX_PLAYERS, MIN_PLAYERS } from '../model/Constants'
 import { getCharacterIdleImage } from '../utils/ArtResources'
@@ -16,15 +20,71 @@ function getErrorOrDefault(error: string | undefined, defaultMsg: string): strin
 }
 
 @Entry
-@Component
+@ComponentV2
 struct LobbyPage {
-  // SessionStore 为 @ObservedV2 类，不可用 @StorageLink 持有（V1 装饰器限制），
-  // 改为普通成员 + @Trace 属性级观察实现响应式
-  store: SessionStore = globalSessionStore
-  @StorageLink('socketManager') socketManager: SocketManager = new SocketManager(new SessionStore())
-  @State selectedCharacter: string = ''
-  @State errorMessage: string = ''
-  @State copiedNotice: string = ''
+  // SessionStore 为 @ObservedV2 类，用 @Local 持有以获得 V2 观察能力
+  @Local store: SessionStore = globalSessionStore
+  // 服务对象无需响应式，aboutToAppear 时从 AppStorage 取回全局实例
+  socketManager: SocketManager = new SocketManager(new SessionStore(), new SessionPersistence())
+  @Local selectedCharacter: string = ''
+  @Local errorMessage: string = ''
+  @Local copiedNotice: string = ''
+  private isTop: boolean = true
+  private navGuard: boolean = false
+  private exitGuard: boolean = false
+
+  aboutToAppear(): void {
+    const sm: SocketManager | undefined = AppStorage.get<SocketManager>('socketManager')
+    if (sm !== undefined) {
+      this.socketManager = sm
+    }
+    this.navigateByRoomState()
+  }
+
+  onPageShow(): void {
+    this.isTop = true
+  }
+
+  onPageHide(): void {
+    this.isTop = false
+  }
+
+  // 房间状态驱动的导航：开局进游戏页；被踢/房间关闭/离开房间时回首页
+  @Monitor('store.room')
+  onRoomChange(monitor: IMonitor): void {
+    this.navigateByRoomState()
+  }
+
+  private navigateByRoomState(): void {
+    const room = this.store.room
+    if (room === null) {
+      if (!this.isTop || this.exitGuard) {
+        return
+      }
+      this.exitGuard = true
+      hilog.info(0xFF00, 'LobbyPage', 'go home')
+      router.clear()
+      router.replaceUrl({ url: 'pages/HomePage' })
+        .catch((error: BusinessError) => {
+          hilog.error(0xFF00, 'LobbyPage', `go home rejected: ${error.message}`)
+        })
+      return
+    }
+    if (room.status === 'LOBBY') {
+      this.navGuard = false
+      return
+    }
+    if (!this.isTop || this.navGuard) {
+      return
+    }
+    this.navGuard = true
+    hilog.info(0xFF00, 'LobbyPage', `push game page, status=${room.status}`)
+    router.pushUrl({ url: 'pages/GamePage' })
+      .catch((error: BusinessError) => {
+        this.navGuard = false
+        hilog.error(0xFF00, 'LobbyPage', `push game page rejected: ${error.message}`)
+      })
+  }
 
   // ====== 计算辅助方法（@Builder 外） ======
 

@@ -26,3 +26,20 @@ Thumbs.db
 # Temporary
 *.tmp
 *.bak
+
+# Build outputs (backend and others)
+dist/
+
+# Verification dumps / runtime artifacts
+.verify-dumps/
+.verify-screens/
+*.pid
+
+# Signing material and secrets — never commit
+*.p12
+*.cer
+*.p7b
+*.jks
+*.keystore
+*.pem
+*.token

@@ -5,12 +5,14 @@ import { window } from '@kit.ArkUI'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { common } from '@kit.AbilityKit'
 import { SessionStore, globalSessionStore } from '../store/SessionStore'
+import { SessionPersistence } from '../store/SessionPersistence'
 import { SocketManager } from '../net/SocketManager'
 import { AudioManager } from '../audio/AudioManager'
 
 export default class EntryAbility extends UIAbility {
   private sessionStore: SessionStore = globalSessionStore
-  private socketManager: SocketManager = new SocketManager(this.sessionStore)
+  private sessionPersistence: SessionPersistence = new SessionPersistence()
+  private socketManager: SocketManager = new SocketManager(this.sessionStore, this.sessionPersistence)
   private audioManager: AudioManager = new AudioManager()
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -25,6 +27,23 @@ export default class EntryAbility extends UIAbility {
 
     // 初始化音效管理器（传入 AbilityContext）
     this.audioManager.init(this.context)
+
+    // 先恢复持久化的会话令牌，再建立连接
+    // （连接成功后 SocketManager 会自动用该令牌执行 session:resume 续玩）
+    this.sessionPersistence.init(this.context)
+      .then((): Promise<string | null> => {
+        return this.sessionPersistence.loadToken()
+      })
+      .then((token: string | null): void => {
+        if (token !== null) {
+          this.sessionStore.sessionToken = token
+        }
+        this.socketManager.connect(this.getServerUrl())
+      })
+      .catch((): void => {
+        // 令牌恢复失败不影响连接建立
+        this.socketManager.connect(this.getServerUrl())
+      })
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
@@ -63,6 +82,6 @@ export default class EntryAbility extends UIAbility {
   // 开发阶段：修改此处 IP 地址指向你的 Node.js 服务器
   // 生产环境：改为正式域名
   getServerUrl(): string {
-    return 'http://192.168.1.100:3001'
+    return 'http://192.168.2.66:3001'
   }
 }

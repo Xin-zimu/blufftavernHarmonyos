@@ -2,7 +2,11 @@
 // 提供创建房间和加入房间两个入口
 
 import { SessionStore, globalSessionStore } from '../store/SessionStore'
+import { SessionPersistence } from '../store/SessionPersistence'
 import { SocketManager } from '../net/SocketManager'
+import { router } from '@kit.ArkUI'
+import { hilog } from '@kit.PerformanceAnalysisKit'
+import { BusinessError } from '@kit.BasicServicesKit'
 import { validateNickname, validateRoomCode } from '../model/Protocol'
 import { MAX_NICKNAME_LENGTH, ROOM_CODE_LENGTH } from '../model/Constants'
 
@@ -15,16 +19,68 @@ function getErrorOrDefault(error: string | undefined, defaultMsg: string): strin
 }
 
 @Entry
-@Component
+@ComponentV2
 struct HomePage {
-  // SessionStore 为 @ObservedV2 类，不可用 @StorageLink 持有（V1 装饰器限制），
-  // 改为普通成员 + @Trace 属性级观察实现响应式
-  store: SessionStore = globalSessionStore
-  @StorageLink('socketManager') socketManager: SocketManager = new SocketManager(new SessionStore())
-  @State nickname: string = ''
-  @State roomCode: string = ''
-  @State errorMessage: string = ''
-  @State isProcessing: boolean = false
+  // SessionStore 为 @ObservedV2 类，用 @Local 持有以获得 V2 观察能力
+  @Local store: SessionStore = globalSessionStore
+  // 服务对象无需响应式，aboutToAppear 时从 AppStorage 取回全局实例
+  socketManager: SocketManager = new SocketManager(new SessionStore(), new SessionPersistence())
+  @Local nickname: string = ''
+  @Local roomCode: string = ''
+  @Local errorMessage: string = ''
+  @Local isProcessing: boolean = false
+  private isTop: boolean = true
+  private navGuard: boolean = false
+
+  aboutToAppear(): void {
+    const sm: SocketManager | undefined = AppStorage.get<SocketManager>('socketManager')
+    hilog.info(0xFF00, 'HomePage', `aboutToAppear, AppStorage manager present: ${sm !== undefined}`)
+    if (sm !== undefined) {
+      this.socketManager = sm
+    }
+    this.navigateForRoom()
+  }
+
+  onPageShow(): void {
+    this.isTop = true
+  }
+
+  onPageHide(): void {
+    this.isTop = false
+  }
+
+  // 房间就绪统一导航：创建房间 / 加入房间 / 会话恢复成功后自动进入对应页面
+  @Monitor('store.room')
+  onRoomChange(monitor: IMonitor): void {
+    hilog.info(0xFF00, 'HomePage', 'onRoomChange monitor fired')
+    const room = this.store.room
+    if (room === null) {
+      this.navGuard = false
+      return
+    }
+    this.navigateForRoom()
+  }
+
+  private navigateForRoom(): void {
+    const room = this.store.room
+    if (room === null) {
+      return
+    }
+    if (!this.isTop || this.navGuard) {
+      return
+    }
+    const state = router.getState()
+    hilog.info(0xFF00, 'HomePage', `nav decision: path=[${state.path}] name=[${state.name}] index=${state.index}`)
+    this.navGuard = true
+    router.pushUrl({ url: room.status === 'LOBBY' ? 'pages/LobbyPage' : 'pages/GamePage' })
+      .then(() => {
+        hilog.info(0xFF00, 'HomePage', 'pushUrl resolved')
+      })
+      .catch((error: BusinessError) => {
+        this.navGuard = false
+        hilog.error(0xFF00, 'HomePage', `pushUrl rejected: ${error.message}`)
+      })
+  }
 
   build() {
     Column() {

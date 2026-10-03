@@ -3,12 +3,12 @@
 import { CardRank } from '../model/GameTypes'
 import { MAX_CARDS_PER_PLAY } from '../model/Constants'
 
-@Component
+@ComponentV2
 export struct CardHand {
-  @Prop hand: CardRank[] = []
-  @Link selectedIndexes: number[]
-  @Prop disabled: boolean = false
-  onCardSelect: (index: number) => void = () => {}
+  @Param hand: CardRank[] = []
+  @Param selectedIndexes: number[] = []
+  @Param disabled: boolean = false
+  @Event onCardSelect: (index: number) => void = (index: number) => {}
 
   // 检查某张牌是否被选中（@Builder 外的方法）
   private isCardSelected(index: number): boolean {

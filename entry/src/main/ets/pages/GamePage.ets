@@ -2,7 +2,11 @@
 // 最复杂的页面，包含 HUD、座位、手牌、操作按钮、演出层等
 
 import { SessionStore, globalSessionStore } from '../store/SessionStore'
+import { SessionPersistence } from '../store/SessionPersistence'
 import { SocketManager } from '../net/SocketManager'
+import { router } from '@kit.ArkUI'
+import { hilog } from '@kit.PerformanceAnalysisKit'
+import { BusinessError } from '@kit.BasicServicesKit'
 import {
   GameSnapshot, PublicPlayerState, GamePhase,
   CardRank, TargetRank, PublicLastPlay, PublicPunishmentState
@@ -18,23 +22,76 @@ import { RulesPanel } from '../components/RulesPanel'
 import { CinematicOverlay } from '../components/CinematicOverlay'
 
 @Entry
-@Component
+@ComponentV2
 struct GamePage {
-  // SessionStore 为 @ObservedV2 类，不可用 @StorageLink 持有（V1 装饰器限制），
-  // 改为普通成员 + @Trace 属性级观察实现响应式
-  store: SessionStore = globalSessionStore
-  @StorageLink('socketManager') socketManager: SocketManager = new SocketManager(new SessionStore())
-  @State selectedCardIndexes: number[] = []
-  @State showRules: boolean = false
-  @State turnTimer: number = 0
+  // SessionStore 为 @ObservedV2 类，用 @Local 持有以获得 V2 观察能力
+  @Local store: SessionStore = globalSessionStore
+  // 服务对象无需响应式，aboutToAppear 时从 AppStorage 取回全局实例
+  socketManager: SocketManager = new SocketManager(new SessionStore(), new SessionPersistence())
+  @Local selectedCardIndexes: number[] = []
+  @Local showRules: boolean = false
+  @Local turnTimer: number = 0
   private timerId: number = -1
+  private isTop: boolean = true
+  private backGuard: boolean = false
+  private exitGuard: boolean = false
 
   aboutToAppear(): void {
+    const sm: SocketManager | undefined = AppStorage.get<SocketManager>('socketManager')
+    if (sm !== undefined) {
+      this.socketManager = sm
+    }
     this.startTurnTimer()
   }
 
   aboutToDisappear(): void {
     this.stopTurnTimer()
+  }
+
+  onPageShow(): void {
+    this.isTop = true
+  }
+
+  onPageHide(): void {
+    this.isTop = false
+  }
+
+  // 房间状态驱动的导航：返回大厅时退回大厅页；被踢/房间关闭时回首页
+  @Monitor('store.room')
+  onRoomChange(monitor: IMonitor): void {
+    const room = this.store.room
+    if (room === null) {
+      if (!this.isTop || this.exitGuard) {
+        return
+      }
+      this.exitGuard = true
+      hilog.info(0xFF00, 'GamePage', 'go home')
+      router.clear()
+      router.replaceUrl({ url: 'pages/HomePage' })
+        .catch((error: BusinessError) => {
+          hilog.error(0xFF00, 'GamePage', `go home rejected: ${error.message}`)
+        })
+      return
+    }
+    if (room.status === 'LOBBY') {
+      if (!this.isTop || this.backGuard) {
+        return
+      }
+      this.backGuard = true
+      hilog.info(0xFF00, 'GamePage', 'back to lobby')
+      // 栈里没有 LobbyPage（如会话恢复后 Home→Game 直达）时，back() 会错误落回 HomePage；
+      // 此时用 replaceUrl 直接落到 LobbyPage，保证回大厅语义
+      if (Number(router.getLength()) >= 3) {
+        router.back()
+      } else {
+        router.replaceUrl({ url: 'pages/LobbyPage' })
+          .catch((error: BusinessError) => {
+            hilog.error(0xFF00, 'GamePage', `replaceUrl lobby rejected: ${error.message}`)
+          })
+      }
+      return
+    }
+    this.backGuard = false
   }
 
   // 回合计时器
@@ -327,7 +384,7 @@ struct GamePage {
         // 手牌区
         CardHand({
           hand: this.getHand(),
-          selectedIndexes: $selectedCardIndexes,
+          selectedIndexes: this.selectedCardIndexes,
           disabled: !this.store.isMyTurn || this.store.mustChallenge,
           onCardSelect: (index: number) => {
             this.toggleCardSelection(index)

@@ -11,14 +11,42 @@ export type RoomStatus = 'LOBBY' | 'STARTING' | 'PLAYING' | 'ROUND_RESULT' | 'GA
 export type PlayerStatus = 'CONNECTED' | 'DISCONNECTED' | 'READY' | 'PLAYING' | 'ELIMINATED' | 'SPECTATING'
 
 // 游戏模式
-export type GameMode = 'CLASSIC' | 'QUICK' | 'PARTY' | 'CUSTOM'
+export type GameMode = 'CLASSIC' | 'QUICK' | 'PARTY' | 'FREE_CHALLENGE' | 'SHARED_REVOLVER' | 'ESCALATION' | 'CUSTOM'
+export type PlayableGameMode = 'CLASSIC' | 'QUICK' | 'PARTY' | 'FREE_CHALLENGE' | 'SHARED_REVOLVER' | 'ESCALATION'
 export type V6GameMode = 'CLASSIC' | 'QUICK'
+
+// 酒馆事件类型
+export type TavernEventType = 'BLACKOUT' | 'DRUNKEN' | 'RAPID_NIGHT' | 'CANDLE_FLICKER' | 'DOUBLE_DANGER' | 'NO_JOKER' | 'FORCED_BET'
 
 // 角色ID
 export type CharacterId = 'WOLF' | 'FOX' | 'BEAR' | 'RABBIT' | 'CAT' | 'RACCOON' | 'FROG' | 'PANDA'
 
 // 道具ID
 export type ItemId = 'SPYGLASS' | 'SWAP_GLOVE' | 'WAX_SEAL' | 'TAVERN_MUG' | 'POCKET_WATCH'
+export type ActiveItemId = 'SPYGLASS' | 'TAVERN_MUG' | 'POCKET_WATCH'
+export type ItemEffectType = 'SPYGLASS_RISK' | 'POCKET_WATCH_EXTENDED' | 'TAVERN_MUG_TIPSY'
+export type ItemRiskLevel = 'LOW' | 'HIGH'
+
+// 角色技能ID
+export type CharacterAbilityId =
+  | 'WOLF_TABLE_READ'
+  | 'FOX_HAND_HINT'
+  | 'BEAR_OPENING_NERVE'
+  | 'RABBIT_QUICK_STEP'
+  | 'CAT_NIGHT_EYE'
+  | 'RACCOON_POCKET_FIND'
+  | 'FROG_STEADY_BREATH'
+  | 'PANDA_REVEAL_MEMORY'
+
+export type AbilityEffectType =
+  | 'ROUND_READ'
+  | 'HAND_HINT'
+  | 'TURN_TIME_EXTENDED'
+  | 'RISK_HINT'
+  | 'ITEM_GRANTED'
+  | 'ITEM_SKIPPED'
+  | 'FORCED_CHALLENGE_TIME'
+  | 'REVEAL_MEMORY'
 
 // 表情ID
 export type EmoteId = 'CHEER' | 'SUSPECT' | 'BLUFF' | 'LAUGH' | 'GASP' | 'NERVOUS' | 'TOAST' | 'GOOD_GAME'
@@ -33,6 +61,7 @@ export type GamePhase =
   | 'MATCH_START'
   | 'ROUND_START'
   | 'TURN'
+  | 'CHALLENGE_WINDOW'
   | 'CHALLENGE_CALLOUT'
   | 'REVEAL'
   | 'VERDICT'
@@ -42,10 +71,20 @@ export type GamePhase =
   | 'ROUND_END'
   | 'GAME_OVER'
 
+// 回合方向
+export type TurnDirection = 'CLOCKWISE' | 'COUNTERCLOCKWISE'
+
 // 角色表情类型
 export type CharacterMood = 'idle' | 'suspicious' | 'bluff' | 'shocked' | 'laugh' | 'nervous' | 'eliminated' | 'victory'
 
 // ====== 基础数据类 ======
+
+// V7 扩展设置
+export class V7ExtensionSettings {
+  itemsEnabled: boolean = false
+  tavernEventsEnabled: boolean = false
+  characterAbilitiesEnabled: boolean = false
+}
 
 // 房间设置
 export class RoomSettings {
@@ -54,6 +93,7 @@ export class RoomSettings {
   turnDurationSeconds: number = 15
   eventEnabled: boolean = false
   bulletCount: number | null = null
+  v7: V7ExtensionSettings = new V7ExtensionSettings()
 }
 
 // 玩家视图
@@ -93,6 +133,13 @@ export class RevolverState {
   shotsTaken: number = 0
 }
 
+// 公共左轮手枪状态（共享左轮模式）
+export class PublicSharedRevolverState {
+  chamberCount: number = 6
+  currentChamber: number = 0
+  shotsTaken: number = 0
+}
+
 // 公开玩家状态
 export class PublicPlayerState {
   playerId: string = ''
@@ -100,8 +147,8 @@ export class PublicPlayerState {
   seatIndex: number = 0
   connected: boolean = true
   alive: boolean = true
-  handCount: number = 0
-  cardCount: number = 0
+  handCount: number | null = null
+  cardCount: number | null = null
 }
 
 // 公开上一次出牌
@@ -127,6 +174,8 @@ export class PublicPunishmentState {
   chamber: number = 0
   hit: boolean = false
   eliminatedPlayerId: string | null = null
+  shotNumber: number = 0
+  totalShots: number = 1
 }
 
 // 公开胜者状态
@@ -145,6 +194,48 @@ export class GameSummary {
   eliminationOrder: string[] = []
 }
 
+// 公开酒馆事件
+export class PublicTavernEvent {
+  type: TavernEventType = 'BLACKOUT'
+  title: string = ''
+  description: string = ''
+  roundNumber: number = 0
+  turnDurationSeconds: number | null = null
+  intensity: string = 'LOW'
+}
+
+// 公开自由质疑窗口
+export class PublicFreeChallengeWindow {
+  challengedId: string = ''
+  openedAt: number = 0
+  endsAt: number = 0
+  challengerId: string | null = null
+}
+
+// 私有道具效果
+export class PrivateItemEffect {
+  itemId: ActiveItemId = 'SPYGLASS'
+  type: ItemEffectType = 'SPYGLASS_RISK'
+  message: string = ''
+  expiresAt: number | null = null
+  riskLevel: ItemRiskLevel | null = null
+  extraSeconds: number | null = null
+}
+
+// 私有角色技能效果
+export class PrivateAbilityEffect {
+  abilityId: CharacterAbilityId = 'WOLF_TABLE_READ'
+  characterId: CharacterId = 'WOLF'
+  type: AbilityEffectType = 'ROUND_READ'
+  title: string = ''
+  message: string = ''
+  expiresAt: number | null = null
+  riskLevel: ItemRiskLevel | null = null
+  extraSeconds: number | null = null
+  grantedItem: ActiveItemId | null = null
+  roundNumber: number | null = null
+}
+
 // 质疑结果
 export class ChallengeResult {
   challengerId: string = ''
@@ -161,7 +252,7 @@ export class GameSnapshot {
   phaseStartedAt: number = 0
   phaseEndsAt: number | null = null
 
-  gameMode: V6GameMode = 'CLASSIC'
+  gameMode: PlayableGameMode = 'CLASSIC'
   turnDurationSeconds: number = 15
   roundNumber: number = 0
   targetRank: TargetRank | null = null
@@ -169,6 +260,8 @@ export class GameSnapshot {
 
   turnPlayerId: string | null = null
   mustChallenge: boolean = false
+  minimumPlayCount: number = 1
+  turnDirection: TurnDirection = 'CLOCKWISE'
 
   players: PublicPlayerState[] = []
   hand: CardRank[] = []
@@ -177,12 +270,17 @@ export class GameSnapshot {
   challenge: PublicChallengeState | null = null
   punishment: PublicPunishmentState | null = null
   winner: PublicWinnerState | null = null
+  freeChallenge: PublicFreeChallengeWindow | null = null
+  sharedRevolver: PublicSharedRevolverState | null = null
 
   alivePlayerIds: string[] = []
   winnerId: string | null = null
   summary: GameSummary | null = null
 
-  items: ItemId[] = []
+  tavernEvent: PublicTavernEvent | null = null
+  items: ActiveItemId[] = []
+  itemEffect: PrivateItemEffect | null = null
+  abilityEffect: PrivateAbilityEffect | null = null
   challengeResult: ChallengeResult | null = null
 }
 
