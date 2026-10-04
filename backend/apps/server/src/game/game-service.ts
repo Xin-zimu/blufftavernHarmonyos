@@ -15,16 +15,27 @@ import {
   type PrivateAbilityEffect,
   type PrivateItemEffect,
   type PublicChallengeState,
+  type PublicPartyEventHistoryEntry,
   type PublicPunishmentState,
   type PublicSharedRevolverState,
   type PublicTavernEvent,
   type RevolverState,
   type RoomView,
+  type TavernEventType,
   type TargetRank,
   type V7ExtensionSettings,
 } from '@bluff-tavern/shared';
 import { RoomError } from '../rooms/room-store.js';
 import type { RandomService } from './random.js';
+import {
+  getChallengePolicy,
+  getEffectivePlayRange,
+  getEffectiveTurnSeconds,
+  getPunishmentShotLimit,
+  getRevolverPolicy,
+  isJokerWild,
+  type EffectivePlayRange,
+} from './mode-rules.js';
 
 interface InternalPlay {
   playerId: string;
@@ -77,7 +88,10 @@ interface InternalGame {
   abilityEffects: Map<string, PrivateAbilityEffect>;
   abilityUsedKeys: Set<string>;
   tavernEvent: PublicTavernEvent | null;
-  previousPartyEventType: (typeof partyEventPool)[number] | null;
+  recentPartyEventTypes: TavernEventType[];
+  partyEventHistory: PublicPartyEventHistoryEntry[];
+  partyRequiredPlayCount: number | null;
+  successfulPlayCountThisRound: number;
   turnDirection: 'CLOCKWISE' | 'COUNTERCLOCKWISE';
   freeChallengeWindow: { challengedId: string; openedAt: number; endsAt: number; challengerId: string | null } | null;
   discardCount: number;
@@ -117,6 +131,99 @@ const ABILITY_EFFECT_DURATION_MS = 20_000;
 const BEAR_OPENING_EXTENSION_SECONDS = 2;
 const RABBIT_EXTENSION_SECONDS = 3;
 const FROG_CHALLENGE_EXTENSION_SECONDS = 4;
+
+const partyEventWeights: Record<(typeof partyEventPool)[number], number> = {
+  HIDDEN_BET: 12,
+  DRUNKEN: 10,
+  RAPID_NIGHT: 8,
+  DOUBLE_DANGER: 5,
+  NO_JOKER: 8,
+  FORCED_BET: 9,
+  ONE_CARD_ONLY: 11,
+  MATCH_BET: 9,
+  HEAVY_HAND: 7,
+  LAST_CALL: 7,
+};
+
+const partyEventMeta: Record<TavernEventType, Omit<PublicTavernEvent, 'roundNumber' | 'turnDurationSeconds'>> = {
+  HIDDEN_BET: {
+    type: 'HIDDEN_BET',
+    title: '暗注夜',
+    description: '本轮其他玩家的剩余手牌数量与每次出牌数量都会隐藏，只有质疑翻牌时才公开被质疑那一手的真实数量。',
+    category: 'INFORMATION',
+    intensity: 'HIGH',
+  },
+  DRUNKEN: {
+    type: 'DRUNKEN',
+    title: '醉酒之夜',
+    description: '本轮行动方向反转。',
+    category: 'TURN_ORDER',
+    intensity: 'MEDIUM',
+  },
+  RAPID_NIGHT: {
+    type: 'RAPID_NIGHT',
+    title: '快速夜',
+    description: '本轮行动时间缩短。',
+    category: 'TEMPO',
+    intensity: 'HIGH',
+  },
+  CANDLE_FLICKER: {
+    type: 'CANDLE_FLICKER',
+    title: '烛火摇曳',
+    description: '本轮质疑演出更紧张，规则判定不变。',
+    category: null,
+    intensity: 'MEDIUM',
+  },
+  DOUBLE_DANGER: {
+    type: 'DOUBLE_DANGER',
+    title: '双倍危机',
+    description: '本轮受罚者最多连续开两枪；第一枪命中时第二枪取消。',
+    category: 'PUNISHMENT',
+    intensity: 'HIGH',
+  },
+  NO_JOKER: {
+    type: 'NO_JOKER',
+    title: '禁忌小丑',
+    description: '本轮 Joker 不再是万能牌。',
+    category: 'CARD_RULE',
+    intensity: 'HIGH',
+  },
+  FORCED_BET: {
+    type: 'FORCED_BET',
+    title: '强制豪赌',
+    description: '第一手正常，从第二手开始每次至少出 2 张。',
+    category: 'CARD_RULE',
+    intensity: 'HIGH',
+  },
+  ONE_CARD_ONLY: {
+    type: 'ONE_CARD_ONLY',
+    title: '单张夜',
+    description: '本轮每次只能出 1 张牌。',
+    category: 'CARD_RULE',
+    intensity: 'LOW',
+  },
+  MATCH_BET: {
+    type: 'MATCH_BET',
+    title: '跟注夜',
+    description: '第一手决定张数，之后所有人必须出相同数量。',
+    category: 'CARD_RULE',
+    intensity: 'MEDIUM',
+  },
+  HEAVY_HAND: {
+    type: 'HEAVY_HAND',
+    title: '豪饮之夜',
+    description: '本轮每次至少出 2 张牌。',
+    category: 'CARD_RULE',
+    intensity: 'MEDIUM',
+  },
+  LAST_CALL: {
+    type: 'LAST_CALL',
+    title: '最后点单',
+    description: '每完成一次出牌，下一位玩家的行动时间都会缩短。',
+    category: 'TEMPO',
+    intensity: 'HIGH',
+  },
+};
 
 const characterAbilities: Record<CharacterId, CharacterAbilityId> = {
   WOLF: 'WOLF_TABLE_READ',
@@ -184,7 +291,10 @@ export class GameService {
       abilityEffects: new Map(),
       abilityUsedKeys: new Set(),
       tavernEvent: null,
-      previousPartyEventType: null,
+      recentPartyEventTypes: [],
+      partyEventHistory: [],
+      partyRequiredPlayCount: null,
+      successfulPlayCountThisRound: 0,
       turnDirection: 'CLOCKWISE',
       freeChallengeWindow: null,
       discardCount: 0,
@@ -220,16 +330,21 @@ export class GameService {
     const hand = game.hands.get(playerId);
     if (!hand) throw new RoomError('PLAYER_NOT_IN_GAME', '你不在本局游戏中');
     if (cardIndexes.some((index) => index < 0 || index >= hand.length)) throw new RoomError('INVALID_CARD_SELECTION', '选择了不存在的手牌');
-    const minimumPlayCount = this.minimumPlayCount(game);
-    if (cardIndexes.length < minimumPlayCount) throw new RoomError('INVALID_CARD_SELECTION', `本模式至少选择 ${minimumPlayCount} 张牌`);
+    const playRange = this.playRange(game);
+    if (cardIndexes.length < playRange.min) throw new RoomError('INVALID_CARD_SELECTION', `本模式至少选择 ${playRange.min} 张牌`);
+    if (cardIndexes.length > playRange.max) throw new RoomError('INVALID_CARD_SELECTION', playRange.min === playRange.max ? `本模式必须选择 ${playRange.max} 张牌` : `本模式最多选择 ${playRange.max} 张牌`);
 
     const cards = cardIndexes.map((index) => hand[index]!);
     [...cardIndexes].sort((a, b) => b - a).forEach((index) => hand.splice(index, 1));
     game.lastPlay = { playerId, cards, count: cards.length };
     game.discardCount += cards.length;
+    if (game.gameMode === 'PARTY' && game.tavernEvent?.type === 'MATCH_BET' && game.partyRequiredPlayCount === null) {
+      game.partyRequiredPlayCount = cards.length;
+    }
+    game.successfulPlayCountThisRound += 1;
     const nextPlayerId = this.nextAlivePlayerId(game, playerId);
     game.freeChallengeWindow = null;
-    if (game.gameMode === 'FREE_CHALLENGE') {
+    if (getChallengePolicy(game.gameMode) === 'FREE_WINDOW') {
       game.turnPlayerId = null;
       game.mustChallenge = false;
       this.openFreeChallengeWindow(game, playerId);
@@ -255,10 +370,10 @@ export class GameService {
 
   challenge(roomCode: string, challengerId: string): ChallengeResult {
     const game = this.requireGame(roomCode);
-    if (game.gameMode === 'FREE_CHALLENGE' && game.pendingChallenge && game.pendingChallenge.challengedId === game.lastPlay?.playerId) {
+    if (getChallengePolicy(game.gameMode) === 'FREE_WINDOW' && game.pendingChallenge && game.pendingChallenge.challengedId === game.lastPlay?.playerId) {
       throw new RoomError('CHALLENGE_ALREADY_TAKEN', '已经有玩家抢先质疑');
     }
-    if (game.gameMode === 'FREE_CHALLENGE') {
+    if (getChallengePolicy(game.gameMode) === 'FREE_WINDOW') {
       if (game.phase !== 'CHALLENGE_WINDOW') throw new RoomError('CHALLENGE_WINDOW_CLOSED', '质疑窗口已经关闭');
       this.requireFreeChallenge(game, challengerId);
     } else {
@@ -311,9 +426,9 @@ export class GameService {
     if (game.mustChallenge) return this.challenge(roomCode, game.turnPlayerId);
     const hand = game.hands.get(game.turnPlayerId) ?? [];
     if (hand.length === 0) return this.challenge(roomCode, game.turnPlayerId);
-    const minimumPlayCount = this.minimumPlayCount(game);
-    if (hand.length < minimumPlayCount) return this.challenge(roomCode, game.turnPlayerId);
-    return this.playCards(roomCode, game.turnPlayerId, this.pickAutoCardIndexes(hand.length, minimumPlayCount));
+    const playRange = this.playRange(game);
+    if (hand.length < playRange.min) return this.challenge(roomCode, game.turnPlayerId);
+    return this.playCards(roomCode, game.turnPlayerId, this.pickAutoCardIndexes(hand.length, playRange.min));
   }
 
   private resolveFreeChallengeTimeout(roomCode: string): ChallengeResult | null {
@@ -444,36 +559,38 @@ export class GameService {
       : null;
 
     return {
+      matchId: game.matchId,
       sequence: game.phaseSequence,
       serverNow: now,
       phase: game.phase,
       phaseStartedAt: game.phaseStartedAt,
       phaseEndsAt: game.phaseEndsAt,
       gameMode: game.gameMode,
-      turnDurationSeconds: game.roundTurnDurationSeconds,
+      turnDurationSeconds: this.turnDurationSeconds(game),
       roundNumber: game.roundNumber,
       targetRank: game.targetRank,
       targetCard: game.targetRank,
       turnPlayerId: game.turnPlayerId,
       mustChallenge: game.mustChallenge,
       minimumPlayCount: this.minimumPlayCount(game),
+      maximumPlayCount: this.maximumPlayCount(game),
       turnDirection: game.turnDirection,
       players: game.playerOrder.map((playerId, seatIndex) => {
         const handCount = game.hands.get(playerId)?.length ?? 0;
-        const visibleHandCount = this.shouldHideHandCount(game, viewerId, playerId) ? null : handCount;
+        const publicHandCount = this.shouldHideHandCount(game, viewerId, playerId) ? null : handCount;
         return {
           playerId,
           name: game.playerNames.get(playerId) ?? playerId,
           seatIndex,
           connected: game.connectedPlayerIds.has(playerId),
           alive: game.alivePlayerIds.has(playerId),
-          handCount: visibleHandCount,
-          cardCount: visibleHandCount,
+          handCount: publicHandCount,
+          cardCount: publicHandCount,
         };
       }),
       hand: [...hand],
-      discardCount: game.discardCount,
-      lastPlay: game.lastPlay ? { playerId: game.lastPlay.playerId, count: game.lastPlay.count, claimedRank: game.targetRank } : null,
+      discardCount: this.publicDiscardCount(game),
+      lastPlay: game.lastPlay ? { playerId: game.lastPlay.playerId, count: this.publicLastPlayCount(game, viewerId), claimedRank: game.targetRank } : null,
       challenge,
       punishment: game.punishment ? { ...game.punishment } : null,
       winner: game.winnerId ? { winnerId: game.winnerId } : null,
@@ -483,6 +600,7 @@ export class GameService {
       winnerId: game.winnerId,
       summary,
       tavernEvent: this.shouldPublishTavernEvent(game) && game.tavernEvent ? { ...game.tavernEvent } : null,
+      partyEventHistory: game.gameMode === 'PARTY' ? game.partyEventHistory.map((entry) => ({ ...entry })) : [],
       items: game.v7.itemsEnabled ? [...(game.itemInventories.get(viewerId) ?? [])] : [],
       itemEffect: game.v7.itemsEnabled ? this.getItemEffect(game, viewerId, now) : null,
       abilityEffect: game.v7.characterAbilitiesEnabled ? this.getAbilityEffect(game, viewerId, now) : null,
@@ -527,9 +645,11 @@ export class GameService {
 
   debugSetTavernEvent(roomCode: string, type: PublicTavernEvent['type'] | null): void {
     const game = this.requireGame(roomCode);
-    game.tavernEvent = type ? this.createTavernEvent(type, game.roundNumber, type === 'RAPID_NIGHT' ? 10 : game.turnDurationSeconds) : null;
-    game.roundTurnDurationSeconds = game.tavernEvent?.turnDurationSeconds ?? game.turnDurationSeconds;
+    game.tavernEvent = type ? this.createTavernEvent(type, game.roundNumber, this.eventTurnDurationSeconds(game, type)) : null;
+    game.roundTurnDurationSeconds = this.turnDurationSeconds(game);
     game.turnDirection = game.tavernEvent?.type === 'DRUNKEN' ? 'COUNTERCLOCKWISE' : 'CLOCKWISE';
+    game.partyRequiredPlayCount = null;
+    game.successfulPlayCountThisRound = 0;
   }
 
   private startRound(game: InternalGame, starterId: string | null): void {
@@ -542,11 +662,24 @@ export class GameService {
       game.hands.set(playerId, deck.slice(seatIndex * 5, seatIndex * 5 + 5));
     }
     game.targetRank = targets[this.random.nextInt(targets.length)]!;
+    game.partyRequiredPlayCount = null;
+    game.successfulPlayCountThisRound = 0;
     game.tavernEvent = game.gameMode === 'PARTY'
       ? this.drawPartyEvent(game)
       : this.drawTavernEvent(game.roundNumber, game.turnDurationSeconds, this.supportsLegacyTavernEvents(game) && game.v7.tavernEventsEnabled);
-    game.roundTurnDurationSeconds = game.tavernEvent?.turnDurationSeconds ?? game.turnDurationSeconds;
+    game.roundTurnDurationSeconds = this.turnDurationSeconds(game);
     game.turnDirection = game.tavernEvent?.type === 'DRUNKEN' ? 'COUNTERCLOCKWISE' : 'CLOCKWISE';
+    if (game.gameMode === 'PARTY' && game.tavernEvent) {
+      game.partyEventHistory = [...game.partyEventHistory, {
+        roundNumber: game.roundNumber,
+        type: game.tavernEvent.type,
+        title: game.tavernEvent.title,
+      }].slice(-3);
+      game.recentPartyEventTypes = [...game.recentPartyEventTypes, game.tavernEvent.type].slice(-2);
+      if (process.env.NODE_ENV !== 'test') {
+        console.info('party_event_selected', { roomCode: game.roomCode, roundNumber: game.roundNumber, eventType: game.tavernEvent.type });
+      }
+    }
     game.turnPlayerId = starterId && game.alivePlayerIds.has(starterId) ? starterId : alivePlayers[0] ?? null;
     game.nextRoundStarterId = game.turnPlayerId;
     game.lastPlay = null;
@@ -824,7 +957,7 @@ export class GameService {
     const now = Date.now();
     switch (itemId) {
       case 'SPYGLASS': {
-        const revolver = game.gameMode === 'SHARED_REVOLVER' ? game.sharedRevolver : game.revolvers.get(playerId);
+        const revolver = getRevolverPolicy(game.gameMode) === 'SHARED' ? game.sharedRevolver : game.revolvers.get(playerId);
         if (!revolver) throw new RoomError('PLAYER_NOT_IN_GAME', '你不在本局游戏中');
         const riskLevel = revolver.currentChamber === revolver.bulletPosition ? 'HIGH' : 'LOW';
         return {
@@ -910,7 +1043,7 @@ export class GameService {
   }
 
   private revolverRiskLevel(game: InternalGame, playerId: string): 'LOW' | 'HIGH' {
-    const revolver = game.gameMode === 'SHARED_REVOLVER' ? game.sharedRevolver : game.revolvers.get(playerId);
+    const revolver = getRevolverPolicy(game.gameMode) === 'SHARED' ? game.sharedRevolver : game.revolvers.get(playerId);
     if (!revolver) throw new RoomError('PLAYER_NOT_IN_GAME', '你不在本局游戏中');
     return revolver.currentChamber === revolver.bulletPosition ? 'HIGH' : 'LOW';
   }
@@ -942,88 +1075,30 @@ export class GameService {
   private drawTavernEvent(roundNumber: number, baseTurnDurationSeconds: number, enabled: boolean): PublicTavernEvent | null {
     if (!enabled) return null;
     if (this.random.nextInt(100) >= TAVERN_EVENT_CHANCE_PERCENT) return null;
-    return this.createTavernEvent(tavernEventPool[this.random.nextInt(tavernEventPool.length)]!, roundNumber, baseTurnDurationSeconds);
+    const type = tavernEventPool[this.random.nextInt(tavernEventPool.length)]!;
+    return this.createTavernEvent(type, roundNumber, this.eventTurnDurationSecondsFor('CLASSIC', type, baseTurnDurationSeconds, 0));
   }
 
   private drawPartyEvent(game: InternalGame): PublicTavernEvent {
-    const choices = partyEventPool.filter((eventType) => eventType !== game.previousPartyEventType);
-    const type = choices[this.random.nextInt(choices.length)]!;
-    game.previousPartyEventType = type;
-    return this.createTavernEvent(type, game.roundNumber, type === 'RAPID_NIGHT' ? 10 : game.turnDurationSeconds);
+    const recentSet = new Set(game.recentPartyEventTypes);
+    let choices = partyEventPool.filter((eventType) => !recentSet.has(eventType));
+    if (choices.length === 0 && game.recentPartyEventTypes.length > 0) {
+      const previous = game.recentPartyEventTypes.at(-1);
+      choices = partyEventPool.filter((eventType) => eventType !== previous);
+    }
+    if (choices.length === 0) choices = [...partyEventPool];
+    const type = this.weightedPartyEvent(choices);
+    return this.createTavernEvent(type, game.roundNumber, this.eventTurnDurationSeconds(game, type));
   }
 
   private createTavernEvent(type: PublicTavernEvent['type'], roundNumber: number, baseTurnDurationSeconds: number): PublicTavernEvent {
-    switch (type) {
-      case 'BLACKOUT':
-        return {
-          type,
-          title: '漆黑之夜',
-          description: '本轮隐藏其他玩家的准确手牌数量。',
-          roundNumber,
-          turnDurationSeconds: null,
-          intensity: 'MEDIUM',
-        };
-      case 'DRUNKEN':
-        return {
-          type,
-          title: '醉酒之夜',
-          description: '本轮出牌方向反转。',
-          roundNumber,
-          turnDurationSeconds: null,
-          intensity: 'MEDIUM',
-        };
-      case 'RAPID_NIGHT': {
-        const turnDurationSeconds = this.gameModeRapidNightSeconds(baseTurnDurationSeconds);
-        return {
-          type,
-          title: '快速夜',
-          description: `本轮回合时间缩短至 ${turnDurationSeconds} 秒。`,
-          roundNumber,
-          turnDurationSeconds,
-          intensity: 'HIGH',
-        };
-      }
-      case 'CANDLE_FLICKER':
-        return {
-          type,
-          title: '烛火摇曳',
-          description: '本轮质疑演出更紧张，规则判定不变。',
-          roundNumber,
-          turnDurationSeconds: null,
-          intensity: 'MEDIUM',
-        };
-      case 'DOUBLE_DANGER':
-        return {
-          type,
-          title: '双倍危机',
-          description: '本轮受罚者最多连续接受两次左轮判定；第一枪命中时第二枪取消。',
-          roundNumber,
-          turnDurationSeconds: null,
-          intensity: 'HIGH',
-        };
-      case 'NO_JOKER':
-        return {
-          type,
-          title: '禁忌小丑',
-          description: '本轮 Joker 不再是万能牌。',
-          roundNumber,
-          turnDurationSeconds: null,
-          intensity: 'HIGH',
-        };
-      case 'FORCED_BET':
-        return {
-          type,
-          title: '强制豪赌',
-          description: '本轮首手可出 1–3 张；从第二手开始每次至少出 2 张，手牌不足时必须质疑。',
-          roundNumber,
-          turnDurationSeconds: null,
-          intensity: 'HIGH',
-        };
-      default: {
-        const neverEvent: never = type;
-        return neverEvent;
-      }
-    }
+    const meta = partyEventMeta[type];
+    return {
+      ...meta,
+      description: type === 'RAPID_NIGHT' ? `本轮每名玩家只有 ${baseTurnDurationSeconds} 秒行动时间。` : meta.description,
+      roundNumber,
+      turnDurationSeconds: type === 'RAPID_NIGHT' ? baseTurnDurationSeconds : null,
+    };
   }
 
   private requireTurn(game: InternalGame, playerId: string): void {
@@ -1081,13 +1156,34 @@ export class GameService {
   }
 
   private turnDurationMs(game: InternalGame): number {
-    return game.roundTurnDurationSeconds * 1_000;
+    return this.turnDurationSeconds(game) * 1_000;
   }
 
   private minimumPlayCount(game: InternalGame): number {
-    const escalationMinimum = game.gameMode === 'ESCALATION' && game.lastPlay ? game.lastPlay.count : 1;
-    const forcedBetMinimum = game.gameMode === 'PARTY' && game.tavernEvent?.type === 'FORCED_BET' && game.lastPlay ? 2 : 1;
-    return Math.max(escalationMinimum, forcedBetMinimum);
+    return this.playRange(game).min;
+  }
+
+  private maximumPlayCount(game: InternalGame): number {
+    return this.playRange(game).max;
+  }
+
+  private playRange(game: InternalGame): EffectivePlayRange {
+    return getEffectivePlayRange(this.modeRuleContext(game));
+  }
+
+  private turnDurationSeconds(game: InternalGame): number {
+    return getEffectiveTurnSeconds(this.modeRuleContext(game));
+  }
+
+  private modeRuleContext(game: InternalGame) {
+    return {
+      gameMode: game.gameMode,
+      eventType: game.tavernEvent?.type ?? null,
+      lastPlayCount: game.lastPlay?.count ?? null,
+      partyRequiredPlayCount: game.partyRequiredPlayCount,
+      successfulPlayCountThisRound: game.successfulPlayCountThisRound,
+      baseTurnDurationSeconds: game.turnDurationSeconds,
+    };
   }
 
   private shouldForceChallengeNextTurn(game: InternalGame, playerId: string | null): boolean {
@@ -1106,8 +1202,29 @@ export class GameService {
     return picked.sort((a, b) => a - b);
   }
 
-  private gameModeRapidNightSeconds(baseTurnDurationSeconds: number): number {
-    return Math.max(5, baseTurnDurationSeconds - 5);
+  private eventTurnDurationSeconds(game: InternalGame, type: TavernEventType): number {
+    return this.eventTurnDurationSecondsFor(game.gameMode, type, game.turnDurationSeconds, game.successfulPlayCountThisRound);
+  }
+
+  private eventTurnDurationSecondsFor(gameMode: PlayableGameMode, type: TavernEventType, baseTurnDurationSeconds: number, successfulPlayCountThisRound: number): number {
+    return getEffectiveTurnSeconds({
+      gameMode,
+      eventType: type,
+      lastPlayCount: null,
+      partyRequiredPlayCount: null,
+      successfulPlayCountThisRound,
+      baseTurnDurationSeconds,
+    });
+  }
+
+  private weightedPartyEvent(choices: readonly (typeof partyEventPool)[number][]): (typeof partyEventPool)[number] {
+    const totalWeight = choices.reduce((sum, eventType) => sum + partyEventWeights[eventType], 0);
+    let roll = this.random.nextInt(totalWeight);
+    for (const eventType of choices) {
+      roll -= partyEventWeights[eventType];
+      if (roll < 0) return eventType;
+    }
+    return choices[choices.length - 1]!;
   }
 
   private dealItem(): ActiveItemId {
@@ -1119,13 +1236,13 @@ export class GameService {
   }
 
   private resolveRevolverShot(game: InternalGame, playerId: string): { chamber: number; hit: boolean } {
-    const revolver = game.gameMode === 'SHARED_REVOLVER' ? game.sharedRevolver : game.revolvers.get(playerId);
+    const revolver = getRevolverPolicy(game.gameMode) === 'SHARED' ? game.sharedRevolver : game.revolvers.get(playerId);
     if (!revolver) throw new RoomError('PLAYER_NOT_IN_GAME', '你不在本局游戏中');
     const chamber = revolver.currentChamber;
     const hit = chamber === revolver.bulletPosition;
     revolver.currentChamber = (revolver.currentChamber + 1) % revolver.chamberCount;
     revolver.shotsTaken += 1;
-    if (hit && game.gameMode === 'SHARED_REVOLVER') game.sharedRevolver = this.createRevolver();
+    if (hit && getRevolverPolicy(game.gameMode) === 'SHARED') game.sharedRevolver = this.createRevolver();
     return { chamber, hit };
   }
 
@@ -1136,19 +1253,34 @@ export class GameService {
   }
 
   private maxPunishmentShots(game: InternalGame): number {
-    return game.gameMode === 'PARTY' && game.tavernEvent?.type === 'DOUBLE_DANGER' ? 2 : 1;
+    return getPunishmentShotLimit({ gameMode: game.gameMode, eventType: game.tavernEvent?.type ?? null });
   }
 
   private isTruthCard(game: InternalGame, card: CardRank): boolean {
     if (card === game.targetRank) return true;
-    if (card === 'JOKER') return game.tavernEvent?.type !== 'NO_JOKER';
+    if (card === 'JOKER') return isJokerWild({ eventType: game.tavernEvent?.type ?? null });
     return false;
+  }
+
+  private publicLastPlayCount(game: InternalGame, viewerId: string): number | null {
+    if (!game.lastPlay) return null;
+    if (game.gameMode !== 'PARTY' || game.tavernEvent?.type !== 'HIDDEN_BET') return game.lastPlay.count;
+    if (viewerId === game.lastPlay.playerId) return game.lastPlay.count;
+    if (!['TURN', 'CHALLENGE_WINDOW', 'CHALLENGE_CALLOUT'].includes(game.phase)) return game.lastPlay.count;
+    return null;
   }
 
   private shouldHideHandCount(game: InternalGame, viewerId: string, playerId: string): boolean {
     return game.gameMode === 'PARTY'
-      && game.tavernEvent?.type === 'BLACKOUT'
+      && game.tavernEvent?.type === 'HIDDEN_BET'
       && viewerId !== playerId;
+  }
+
+  private publicDiscardCount(game: InternalGame): number | null {
+    // A cumulative total can expose earlier, unchallenged plays even to the current play owner.
+    return game.gameMode === 'PARTY' && game.tavernEvent?.type === 'HIDDEN_BET'
+      ? null
+      : game.discardCount;
   }
 
   private shouldPublishTavernEvent(game: InternalGame): boolean {

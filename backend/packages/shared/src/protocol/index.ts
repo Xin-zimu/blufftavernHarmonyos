@@ -68,7 +68,7 @@ export interface ServerToClientEvents {
   'game:cue': (event: GameCue) => void;
   'game:state': (state: GameView) => void;
   'game:turnStarted': (state: GameView) => void;
-  'game:cardsPlayed': (event: { playerId: string; count: number; roundNumber: number }) => void;
+  'game:cardsPlayed': (event: { playerId: string; count: number | null; roundNumber: number }) => void;
   'game:challengeStarted': (event: { challengerId: string; challengedPlayerId: string }) => void;
   'game:challengeResult': (state: GameView) => void;
   'game:punishmentStarted': (event: { playerId: string; chamber: number }) => void;

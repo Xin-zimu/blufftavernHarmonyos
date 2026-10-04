@@ -1,100 +1,134 @@
-// 玩家座位组件 - 显示单个玩家的信息
+// 玩家座位组件 - 对应网页版 game-players 列表项
+// 角色头像 + 昵称（你）（离线） + 出牌中 · 角色名 · n 张手牌 / 手牌数量隐藏 / 已淘汰
 
 import { PublicPlayerState } from '../model/GameTypes'
-import { getCharacterIdleImage } from '../utils/ArtResources'
+import { getCharacterImage } from '../utils/ArtResources'
+import { CHARACTER_NAMES } from '../model/Constants'
 
-@Component
+@ComponentV2
 export struct PlayerSeat {
-  @Prop player: PublicPlayerState = new PublicPlayerState()
-  @Prop isCurrentTurn: boolean = false
-  @Prop isMe: boolean = false
-  @Prop characterId: string = ''
+  @Param player: PublicPlayerState = new PublicPlayerState()
+  @Param characterId: string = ''
+  @Param characterName: string = ''
+  @Param isCurrentTurn: boolean = false
+  @Param isMe: boolean = false
+  @Param newlyEliminated: boolean = false
+  @Param isWinner: boolean = false
 
-  build() {
-    Column() {
-      // 角色头像
-      Stack() {
-        if (this.characterId.length > 0) {
-          Image(getCharacterIdleImage(this.characterId))
-            .width(48)
-            .height(48)
-            .borderRadius(24)
-        } else {
-          Circle()
-            .width(48)
-            .height(48)
-            .fill('#2A2A4E')
-        }
+  private getHandCountText(): string {
+    if (!this.player.alive) {
+      return '已淘汰'
+    }
+    if (this.player.cardCount === null) {
+      return '手牌数量隐藏'
+    }
+    return `${this.player.cardCount} 张手牌`
+  }
 
-        // 当前回合标记
-        if (this.isCurrentTurn) {
-          Circle()
-            .width(56)
-            .height(56)
-            .fill(Color.Transparent)
-            .stroke('#D4A574')
-            .strokeWidth(2)
-        }
-
-        // 淘汰标记
-        if (!this.player.alive) {
-          Column()
-            .width(48)
-            .height(48)
-            .backgroundColor('#000000')
-            .opacity(0.6)
-            .borderRadius(24)
-        }
-      }
-      .width(56)
-      .height(56)
-
-      // 昵称
-      Text(this.player.name)
-        .fontSize(12)
-        .fontColor(this.player.alive ? '#FFFFFF' : '#666680')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .constraintSize({ maxWidth: 80 })
-
-      // 手牌数（其他玩家的手牌数可能被隐藏，此时显示 ?）
-      if (this.player.alive) {
-        if (this.player.cardCount !== null) {
-          Row() {
-            ForEach([1, 2, 3, 4, 5], (i: number) => {
-              Circle()
-                .width(6)
-                .height(6)
-                .fill(i <= (this.player.cardCount ?? 0) ? '#D4A574' : '#2A2A4E')
-                .margin({ left: 2, right: 2 })
-            })
-          }
-          .height(8)
-        } else {
-          Text('?')
-            .fontSize(10)
-            .fontColor('#8888A0')
-            .height(8)
-        }
-      }
-
-      // 离线标记
-      if (!this.player.connected && this.player.alive) {
-        Text('离线')
-          .fontSize(10)
-          .fontColor('#F44336')
+  private getCharacterName(): string {
+    if (this.characterName.length > 0) {
+      return this.characterName
+    }
+    if (this.characterId.length > 0) {
+      const name: string | undefined = CHARACTER_NAMES.get(this.characterId)
+      if (name !== undefined) {
+        return name
       }
     }
-    .width(80)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .padding({ top: 4, bottom: 4 })
-    .borderRadius(8)
-    .backgroundColor(this.isMe ? '#3A3A5E' : '#2A2A4E')
+    return '未选角色'
+  }
+
+  build() {
+    Row() {
+      // 角色头像
+      Stack() {
+        if (this.characterId.length > 0 && this.player.alive) {
+          Image(getCharacterImage(this.characterId, this.isWinner ? 'victory' : 'idle'))
+            .width(44)
+            .height(44)
+            .borderRadius(22)
+            .objectFit(ImageFit.Cover)
+        } else if (this.characterId.length > 0) {
+          Image(getCharacterImage(this.characterId, 'eliminated'))
+            .width(44)
+            .height(44)
+            .borderRadius(22)
+            .objectFit(ImageFit.Cover)
+            .grayscale(1)
+            .opacity(0.55)
+        } else {
+          Column() {
+            Text(this.player.name.length > 0 ? this.player.name.substring(0, 1) : '?')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#D4A85D')
+          }
+          .width(44)
+          .height(44)
+          .backgroundColor('#2B1914')
+          .borderRadius(22)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        }
+
+        // 当前回合金色描边
+        if (this.isCurrentTurn) {
+          Circle()
+            .width(50)
+            .height(50)
+            .fill(Color.Transparent)
+            .stroke('#F2C777')
+            .strokeWidth(2)
+        }
+      }
+      .width(52)
+      .height(52)
+
+      // 座位文案
+      Column() {
+        Row() {
+          Text(this.player.name)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.player.alive ? '#E8DDC8' : '#6B5A4A')
+          if (this.isMe) {
+            Text('（你）')
+              .fontSize(12)
+              .fontColor('#F2C777')
+          }
+          if (!this.player.connected) {
+            Text('（离线）')
+              .fontSize(12)
+              .fontColor('#FF756D')
+          }
+        }
+        .constraintSize({ maxWidth: '88%' })
+
+        Row() {
+          if (this.isCurrentTurn) {
+            Text('出牌中 · ')
+              .fontSize(11)
+              .fontColor('#F2C777')
+          }
+          Text(`${this.getCharacterName()} · ${this.getHandCountText()}`)
+            .fontSize(11)
+            .fontColor(this.player.alive ? '#A67C3D' : '#6B5A4A')
+        }
+        .margin({ top: 2 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 10 })
+    }
+    .width('100%')
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .borderRadius(10)
+    .backgroundColor(this.isMe ? '#2B1914' : '#231713')
     .border({
-      width: this.isCurrentTurn ? 2 : 0,
-      color: '#D4A574',
+      width: this.isCurrentTurn ? 1 : 1,
+      color: this.isCurrentTurn ? '#F2C777' : (this.newlyEliminated ? '#FF756D' : '#4D3830'),
       style: BorderStyle.Solid
     })
+    .opacity(this.player.alive ? 1.0 : 0.62)
   }
 }

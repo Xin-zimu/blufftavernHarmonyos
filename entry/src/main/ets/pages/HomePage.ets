@@ -7,7 +7,7 @@ import { SocketManager } from '../net/SocketManager'
 import { router } from '@kit.ArkUI'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { BusinessError } from '@kit.BasicServicesKit'
-import { validateNickname, validateRoomCode } from '../model/Protocol'
+import { validateNickname } from '../model/Protocol'
 import { MAX_NICKNAME_LENGTH, ROOM_CODE_LENGTH } from '../model/Constants'
 
 // 辅助函数：替代 ?? 操作符
@@ -90,93 +90,107 @@ struct HomePage {
       // 通知消息
       if (this.store.notice) {
         Text(this.store.notice)
-          .fontSize(14)
-          .fontColor('#FF6B6B')
-          .margin({ top: 10, bottom: 10 })
+          .fontSize(13)
+          .fontColor('#E8DDC8')
+          .backgroundColor('#7A2632')
+          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+          .borderRadius(4)
+          .margin({ top: 10 })
+          .onClick(() => {
+            this.store.setNotice(null)
+          })
       }
 
       // 错误消息
       if (this.errorMessage) {
         Text(this.errorMessage)
-          .fontSize(14)
-          .fontColor('#FF6B6B')
+          .fontSize(13)
+          .fontColor('#D8AAA1')
           .margin({ top: 10, bottom: 10 })
       }
 
-      // 创建房间区域
-      this.CreateRoomArea()
-
-      // 分隔线
-      Row() {
-        Divider()
-          .width('40%')
-          .color('#D4A574')
-        Text('或')
-          .fontSize(14)
-          .fontColor('#D4A574')
-          .margin({ left: 10, right: 10 })
-        Divider()
-          .width('40%')
-          .color('#D4A574')
-      }
-      .width('80%')
-      .margin({ top: 20, bottom: 20 })
-
-      // 加入房间区域
-      this.JoinRoomArea()
+      // 入口面板
+      this.EntryPanel()
 
       // 连接状态指示
       this.ConnectionStatus()
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#1A1A2E')
+    .backgroundColor('#17110F')
+    .backgroundImage($r('app.media.background_bg_01_tavern_v1'))
+    .backgroundImageSize(ImageSize.Cover)
     .justifyContent(FlexAlign.Center)
   }
 
   // 品牌区域
   @Builder BrandArea() {
     Column() {
-      Text('诡牌酒馆')
-        .fontSize(42)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#D4A574')
-        .margin({ bottom: 8 })
-
+      Image($r('app.media.ui_game_emblem'))
+        .width(88)
+        .height(88)
+        .objectFit(ImageFit.Contain)
+        .margin({ bottom: 12 })
       Text('BLUFF TAVERN')
-        .fontSize(16)
-        .fontColor('#8B7355')
-        .letterSpacing(4)
+        .fontSize(12)
+        .fontColor('#D4A85D')
+        .letterSpacing(6)
+        .fontWeight(FontWeight.Bold)
+
+      Text('诡牌酒馆')
+        .fontSize(44)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#E8DDC8')
+        .margin({ top: 8 })
+
+      Text('推开暗门，找张椅子。今晚先从聚齐牌友开始。')
+        .fontSize(13)
+        .fontColor('#A99B8D')
+        .textAlign(TextAlign.Center)
+        .margin({ top: 14, bottom: 32 })
+        .padding({ left: 24, right: 24 })
     }
-    .margin({ bottom: 40 })
+    .alignItems(HorizontalAlign.Center)
   }
 
-  // 创建房间区域
-  @Builder CreateRoomArea() {
+  // 入口面板（创建/加入）
+  @Builder EntryPanel() {
     Column() {
-      TextInput({ placeholder: '输入昵称', text: this.nickname })
-        .maxLength(MAX_NICKNAME_LENGTH)
-        .width('80%')
-        .height(48)
-        .backgroundColor('#2A2A4E')
-        .fontColor('#FFFFFF')
-        .placeholderColor('#666680')
-        .borderRadius(8)
-        .onChange((value: string) => {
-          this.nickname = value
-          this.errorMessage = ''
-        })
+      // 昵称
+      Column() {
+        Text('酒馆称呼')
+          .fontSize(12)
+          .fontColor('#C8B9A1')
+          .margin({ bottom: 8 })
+          .width('100%')
+        TextInput({ placeholder: '输入 1–16 字昵称', text: this.nickname })
+          .maxLength(MAX_NICKNAME_LENGTH)
+          .width('100%')
+          .height(50)
+          .backgroundColor('#120D0B')
+          .fontColor('#F2C777')
+          .placeholderColor('#6E625B')
+          .borderRadius(4)
+          .border({ width: 1, color: '#6E625B' })
+          .onChange((value: string) => {
+            this.nickname = value
+            this.errorMessage = ''
+          })
+      }
+      .width('100%')
 
+      // 创建房间
       Button('创建房间')
-        .width('80%')
-        .height(48)
-        .backgroundColor('#D4A574')
-        .fontColor('#1A1A2E')
-        .fontSize(18)
+        .width('100%')
+        .height(50)
+        .backgroundColor('#8B303D')
+        .fontColor('#E8DDC8')
+        .fontSize(16)
         .fontWeight(FontWeight.Bold)
-        .borderRadius(8)
-        .margin({ top: 12 })
-        .enabled(!this.isProcessing && validateNickname(this.nickname))
+        .borderRadius(4)
+        .border({ width: 1, color: '#A67C3D' })
+        .margin({ top: 14 })
+        .enabled(!this.isProcessing && validateNickname(this.nickname) && this.store.connection === 'connected')
         .onClick(() => {
           this.isProcessing = true
           this.errorMessage = ''
@@ -187,51 +201,63 @@ struct HomePage {
             }
           })
         })
-    }
-    .width('100%')
-  }
 
-  // 加入房间区域
-  @Builder JoinRoomArea() {
-    Column() {
-      TextInput({ placeholder: '输入昵称', text: this.nickname })
-        .maxLength(MAX_NICKNAME_LENGTH)
-        .width('80%')
-        .height(48)
-        .backgroundColor('#2A2A4E')
-        .fontColor('#FFFFFF')
-        .placeholderColor('#666680')
-        .borderRadius(8)
-        .onChange((value: string) => {
-          this.nickname = value
-          this.errorMessage = ''
-        })
+      // 分隔线
+      Row() {
+        Divider()
+          .layoutWeight(1)
+          .color('#4D3830')
+        Text('或凭房间码入席')
+          .fontSize(11)
+          .fontColor('#82756C')
+          .margin({ left: 10, right: 10 })
+        Divider()
+          .layoutWeight(1)
+          .color('#4D3830')
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 28, bottom: 28 })
 
-      TextInput({ placeholder: `输入${ROOM_CODE_LENGTH}位房间码`, text: this.roomCode })
-        .maxLength(ROOM_CODE_LENGTH)
-        .width('80%')
-        .height(48)
-        .backgroundColor('#2A2A4E')
-        .fontColor('#FFFFFF')
-        .placeholderColor('#666680')
-        .borderRadius(8)
-        .margin({ top: 12 })
-        .onChange((value: string) => {
-          // 自动过滤非字母数字字符并转大写
-          this.roomCode = value.toUpperCase().replace(/[^A-Z0-9]/g, '')
-          this.errorMessage = ''
-        })
+      // 房间码
+      Column() {
+        Text('6 位房间码')
+          .fontSize(12)
+          .fontColor('#C8B9A1')
+          .margin({ bottom: 8 })
+          .width('100%')
+        TextInput({ placeholder: '例如 7K3M9X', text: this.roomCode })
+          .maxLength(ROOM_CODE_LENGTH)
+          .width('100%')
+          .height(50)
+          .backgroundColor('#120D0B')
+          .fontColor('#F2C777')
+          .placeholderColor('#6E625B')
+          .borderRadius(4)
+          .border({ width: 1, color: '#6E625B' })
+          .textAlign(TextAlign.Center)
+          .fontWeight(FontWeight.Bold)
+          .onChange((value: string) => {
+            // 自动过滤非字母数字字符并转大写
+            this.roomCode = value.toUpperCase().replace(/[^A-Z0-9]/g, '')
+            this.errorMessage = ''
+          })
+      }
+      .width('100%')
 
+      // 加入房间
       Button('加入房间')
-        .width('80%')
-        .height(48)
-        .backgroundColor('#8B7355')
-        .fontColor('#FFFFFF')
-        .fontSize(18)
+        .width('100%')
+        .height(50)
+        .backgroundColor('#2B1914')
+        .fontColor('#E8DDC8')
+        .fontSize(16)
         .fontWeight(FontWeight.Bold)
-        .borderRadius(8)
-        .margin({ top: 12 })
-        .enabled(!this.isProcessing && validateNickname(this.nickname) && validateRoomCode(this.roomCode))
+        .borderRadius(4)
+        .border({ width: 1, color: '#A67C3D' })
+        .margin({ top: 14 })
+        .enabled(!this.isProcessing && validateNickname(this.nickname)
+          && this.roomCode.length === ROOM_CODE_LENGTH && this.store.connection === 'connected')
         .onClick(() => {
           this.isProcessing = true
           this.errorMessage = ''
@@ -243,7 +269,12 @@ struct HomePage {
           })
         })
     }
-    .width('100%')
+    .width('86%')
+    .constraintSize({ maxWidth: 420 })
+    .padding(22)
+    .borderRadius(8)
+    .border({ width: 1, color: 'rgba(166,124,61,0.5)' })
+    .backgroundColor('#231713')
   }
 
   // 连接状态指示
@@ -252,14 +283,14 @@ struct HomePage {
       Circle()
         .width(8)
         .height(8)
-        .fill(this.store.connection === 'connected' ? '#4CAF50' :
-              this.store.connection === 'connecting' ? '#FFC107' : '#F44336')
+        .fill(this.store.connection === 'connected' ? '#75A56A' :
+              this.store.connection === 'connecting' ? '#D4A85D' : '#BC514C')
         .margin({ right: 6 })
 
       Text(this.store.connection === 'connected' ? '已连接' :
            this.store.connection === 'connecting' ? '连接中...' : '未连接')
         .fontSize(12)
-        .fontColor('#888899')
+        .fontColor('#81746B')
     }
     .margin({ top: 30 })
   }

@@ -189,6 +189,23 @@ export class RoomStore {
     return this.rooms.get(code)?.players.find((player) => player.id === playerId)?.socketId ?? null;
   }
 
+  /** Dev-only (P4_DEBUG): rooms with player socket ids and session tokens for local acceptance tooling. */
+  debugSnapshot(): Array<{ code: string; status: string; hostPlayerId: string; players: Array<{ id: string; nickname: string; socketId: string; sessionToken: string; isConnected: boolean; status: string }> }> {
+    return [...this.rooms.values()].map((room) => ({
+      code: room.code,
+      status: room.status,
+      hostPlayerId: room.hostPlayerId,
+      players: room.players.map((player) => ({
+        id: player.id,
+        nickname: player.nickname,
+        socketId: player.socketId,
+        sessionToken: player.sessionToken,
+        isConnected: player.isConnected,
+        status: player.status,
+      })),
+    }));
+  }
+
   isCurrentSocket(code: string, playerId: string, socketId: string): boolean {
     return this.getSocketId(code, playerId) === socketId;
   }

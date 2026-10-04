@@ -15,8 +15,22 @@ export type GameMode = 'CLASSIC' | 'QUICK' | 'PARTY' | 'FREE_CHALLENGE' | 'SHARE
 export type PlayableGameMode = 'CLASSIC' | 'QUICK' | 'PARTY' | 'FREE_CHALLENGE' | 'SHARED_REVOLVER' | 'ESCALATION'
 export type V6GameMode = 'CLASSIC' | 'QUICK'
 
-// 酒馆事件类型
-export type TavernEventType = 'BLACKOUT' | 'DRUNKEN' | 'RAPID_NIGHT' | 'CANDLE_FLICKER' | 'DOUBLE_DANGER' | 'NO_JOKER' | 'FORCED_BET'
+// 酒馆事件类型（7.2：11 种，含 PARTY 事件）
+export type TavernEventType =
+  | 'HIDDEN_BET'
+  | 'DRUNKEN'
+  | 'RAPID_NIGHT'
+  | 'CANDLE_FLICKER'
+  | 'DOUBLE_DANGER'
+  | 'NO_JOKER'
+  | 'FORCED_BET'
+  | 'ONE_CARD_ONLY'
+  | 'MATCH_BET'
+  | 'HEAVY_HAND'
+  | 'LAST_CALL'
+
+// Party 事件分类
+export type PartyEventCategory = 'INFORMATION' | 'TURN_ORDER' | 'TEMPO' | 'CARD_RULE' | 'PUNISHMENT'
 
 // 角色ID
 export type CharacterId = 'WOLF' | 'FOX' | 'BEAR' | 'RABBIT' | 'CAT' | 'RACCOON' | 'FROG' | 'PANDA'
@@ -151,10 +165,10 @@ export class PublicPlayerState {
   cardCount: number | null = null
 }
 
-// 公开上一次出牌
+// 公开上一次出牌（7.2：HIDDEN_BET 回合 count 为 null）
 export class PublicLastPlay {
   playerId: string = ''
-  count: number = 0
+  count: number | null = null
   claimedRank: TargetRank = 'A'
 }
 
@@ -196,12 +210,20 @@ export class GameSummary {
 
 // 公开酒馆事件
 export class PublicTavernEvent {
-  type: TavernEventType = 'BLACKOUT'
+  type: TavernEventType = 'HIDDEN_BET'
   title: string = ''
   description: string = ''
+  category: PartyEventCategory | null = null
   roundNumber: number = 0
   turnDurationSeconds: number | null = null
   intensity: string = 'LOW'
+}
+
+// Party 事件历史条目（7.2 新增）
+export class PublicPartyEventHistoryEntry {
+  roundNumber: number = 0
+  type: TavernEventType = 'HIDDEN_BET'
+  title: string = ''
 }
 
 // 公开自由质疑窗口
@@ -246,6 +268,7 @@ export class ChallengeResult {
 
 // 游戏快照 - 服务端推送给客户端的完整状态
 export class GameSnapshot {
+  matchId: string = ''
   sequence: number = 0
   serverNow: number = 0
   phase: GamePhase = 'LOBBY'
@@ -261,11 +284,12 @@ export class GameSnapshot {
   turnPlayerId: string | null = null
   mustChallenge: boolean = false
   minimumPlayCount: number = 1
+  maximumPlayCount: number = 3
   turnDirection: TurnDirection = 'CLOCKWISE'
 
   players: PublicPlayerState[] = []
   hand: CardRank[] = []
-  discardCount: number = 0
+  discardCount: number | null = null
   lastPlay: PublicLastPlay | null = null
   challenge: PublicChallengeState | null = null
   punishment: PublicPunishmentState | null = null
@@ -278,6 +302,7 @@ export class GameSnapshot {
   summary: GameSummary | null = null
 
   tavernEvent: PublicTavernEvent | null = null
+  partyEventHistory: PublicPartyEventHistoryEntry[] = []
   items: ActiveItemId[] = []
   itemEffect: PrivateItemEffect | null = null
   abilityEffect: PrivateAbilityEffect | null = null

@@ -116,6 +116,13 @@ export class WebSocketGateway {
           // Socket already gone.
         }
       },
+      terminate: () => {
+        try {
+          socket.terminate();
+        } catch {
+          // Socket already gone.
+        }
+      },
     };
     this.registry.register(connection);
     this.idle.set(connectionId, { socket, lastFrameAt: Date.now() });

@@ -1,64 +1,41 @@
-// 目标牌 HUD 组件 - 显示本轮目标牌和轮次编号
+// 目标牌 HUD 组件 - 对应网页版 RoundTargetHud
+// 本轮目标 + 目标牌 + 第 N 轮 · 出牌声明均视为 X
 
 import { TargetRank } from '../model/GameTypes'
 
-@Component
+@ComponentV2
 export struct TargetHUD {
-  @Prop targetRank: TargetRank | null = null
-  @Prop targetCard: TargetRank = 'A'
-  @Prop roundNumber: number = 0
-
-  // 获取显示用的目标牌（@Builder 外方法）
-  private getDisplayRank(): string {
-    if (this.targetRank !== null) {
-      return this.targetRank
-    }
-    return this.targetCard
-  }
+  @Param targetCard: TargetRank = 'A'
+  @Param roundNumber: number = 0
 
   build() {
-    Row() {
-      // 回合编号
-      Column() {
-        Text('回合')
-          .fontSize(10)
-          .fontColor('#888899')
-        Text(`${this.roundNumber}`)
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#D4A574')
-      }
-      .alignItems(HorizontalAlign.Center)
-      .margin({ right: 16 })
+    Column() {
+      Text('本轮目标')
+        .fontSize(11)
+        .fontColor('#D4A85D')
+        .margin({ bottom: 6 })
 
-      // 目标牌
-      Column() {
-        Text('目标牌')
-          .fontSize(10)
-          .fontColor('#888899')
-        Row() {
-          Text(this.getDisplayRank())
-            .fontSize(28)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#D4A574')
-        }
-        .width(48)
-        .height(48)
-        .backgroundColor('#2A2A4E')
+      // 目标牌牌面（米黄卡面）
+      Text(this.targetCard)
+        .fontSize(30)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#5B1F28')
+        .width(52)
+        .height(64)
+        .textAlign(TextAlign.Center)
+        .backgroundColor('#E8DDC8')
         .borderRadius(8)
-        .justifyContent(FlexAlign.Center)
-        .alignItems(VerticalAlign.Center)
-        .border({
-          width: 2,
-          color: '#D4A574',
-          style: BorderStyle.Solid
-        })
-      }
-      .alignItems(HorizontalAlign.Center)
+        .border({ width: 2, color: '#A67C3D', style: BorderStyle.Solid })
+        .margin({ bottom: 6 })
+
+      Text(`第 ${this.roundNumber} 轮 · 出牌声明均视为 ${this.targetCard}`)
+        .fontSize(12)
+        .fontColor('#E8DDC8')
     }
-    .width('90%')
-    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .backgroundColor('#2A2A4E')
-    .borderRadius(8)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 10, bottom: 10, left: 14, right: 14 })
+    .backgroundColor('#231713')
+    .borderRadius(10)
+    .border({ width: 1, color: '#4D3830', style: BorderStyle.Solid })
   }
 }

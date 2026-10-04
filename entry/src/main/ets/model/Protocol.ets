@@ -5,11 +5,11 @@
 import {
   RoomMembership, RoomView, GameView, GameSnapshot, GameCue,
   RoomPlayerEvent, SessionResumeResult, CharacterId, EmoteId, ItemId,
-  GameMode, V6GameMode, AckResult, AckError
+  GameMode, PlayableGameMode, AckResult, AckError, V7ExtensionSettings
 } from './GameTypes'
 import {
   ROOM_CODE_LENGTH, ROOM_CODE_ALPHABET, MIN_NICKNAME_LENGTH,
-  MAX_NICKNAME_LENGTH, MAX_PLAYERS, MIN_PLAYERS, MAX_CARDS_PER_PLAY
+  MAX_NICKNAME_LENGTH, MAX_PLAYERS, MIN_PLAYERS
 } from './Constants'
 
 // ====== 输入验证函数 ======
@@ -28,8 +28,8 @@ export function validateRoomCode(code: string): boolean {
   return true
 }
 
-export function validateCardIndexes(indexes: number[]): boolean {
-  if (indexes.length < 1 || indexes.length > MAX_CARDS_PER_PLAY) return false
+export function validateCardIndexes(indexes: number[], minimumCount: number, maximumCount: number): boolean {
+  if (indexes.length < minimumCount || indexes.length > maximumCount) return false
   for (const index of indexes) {
     if (!Number.isInteger(index) || index < 0) return false
   }
@@ -69,13 +69,15 @@ export class ReadyRoomPayload {
   requestId: string = ''
 }
 
-// 注意：服务端 schema 中 turnDurationSeconds / eventEnabled / bulletCount / v7
-// 均为 optional（非 nullable），显式发送 null 会被 zod 拒绝。
-// 本客户端仅更新 maxPlayers / gameMode，未设置的可选字段一律不发送。
+// 7.2：完整设置载荷，与网页版一致（bulletCount 可为 null，schema 允许 nullable）
 export class UpdateRoomSettingsPayload {
   roomCode: string = ''
   maxPlayers: number = 8
-  gameMode: V6GameMode = 'CLASSIC'
+  gameMode: PlayableGameMode = 'CLASSIC'
+  turnDurationSeconds: number = 15
+  eventEnabled: boolean = false
+  bulletCount: number | null = null
+  v7: V7ExtensionSettings = new V7ExtensionSettings()
   requestId: string = ''
 }
 
@@ -135,7 +137,7 @@ export class UseItemPayload {
 
 export class CardsPlayedEvent {
   playerId: string = ''
-  count: number = 0
+  count: number | null = null
   roundNumber: number = 0
 }
 

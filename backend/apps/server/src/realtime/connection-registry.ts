@@ -11,6 +11,8 @@ export interface ClientConnection {
   readonly transport: TransportKind;
   send(event: string, payload: unknown): void;
   close(): void;
+  /** Abrupt transport-level cut (RST). Optional: only raw-WS implements it. */
+  terminate?(): void;
 }
 
 export interface ConnectionIdentity {

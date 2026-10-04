@@ -100,6 +100,24 @@ export async function createApp(config: ServerConfig & { random?: RandomService;
     timestamp: Date.now(),
   }));
   io.on('connection', (socket) => registerRoomHandlers(io, socket, dispatcher, registry));
+  // Dev-only acceptance tooling (local backend debugging). Never enabled in production.
+  if (process.env.P4_DEBUG === '1') {
+    app.get('/debug/rooms', async () => ({ rooms: rooms.debugSnapshot() }));
+    app.post('/debug/kick', async (request) => {
+      const body = (request.body ?? {}) as { roomCode?: string; playerId?: string };
+      if (typeof body.roomCode !== 'string' || typeof body.playerId !== 'string') {
+        return { ok: false, error: 'roomCode and playerId required' };
+      }
+      const socketId = rooms.getSocketId(body.roomCode, body.playerId);
+      if (!socketId) return { ok: false, error: 'player socket not found' };
+      const connection = registry.get(socketId);
+      if (!connection) return { ok: false, error: 'connection not found' };
+      if (connection.terminate) connection.terminate();
+      else connection.close();
+      app.log.info({ event: 'debug_kick', roomCode: body.roomCode, playerId: body.playerId, connectionId: socketId });
+      return { ok: true };
+    });
+  }
   const wsGateway = new WebSocketGateway(app.server, dispatcher, registry, app.log, {
     ...(config.wsIdleTimeoutMs !== undefined ? { idleTimeoutMs: config.wsIdleTimeoutMs } : {}),
   });

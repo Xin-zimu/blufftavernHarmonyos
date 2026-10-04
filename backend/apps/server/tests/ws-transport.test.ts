@@ -346,9 +346,17 @@ describe('raw WebSocket transport', () => {
 
       // ===== game 2: restart, then the guest swaps to raw WS mid-game =====
       const indexAtRestart = hostWs.pushes.length;
+      const passiveRestart = ioWaitGameState(guestIo, (state) => state.phase === 'ROUND_START' && state.matchId !== gameOver.matchId);
       const restarted = await hostWs.requestOk('game:restart', { roomCode, requestId: randomUUID() }) as unknown as GameView;
       expect(restarted.phase).toBe('ROUND_START');
       expect(restarted.hand).toEqual(initialHand);
+      const guestRestarted = await passiveRestart;
+      expect(restarted.matchId).toBeTruthy();
+      expect(restarted.matchId).not.toBe(gameOver.matchId);
+      expect(guestRestarted.matchId).toBe(restarted.matchId);
+      expect(guestRestarted.sequence).toBe(1);
+      expect(guestRestarted.summary).toBeNull();
+      expect(guestRestarted.hand).not.toEqual(restarted.hand);
 
       const gameTwoTurn = await hostWs.waitNextPush<GameView>('game:snapshot', indexAtRestart, (state) => state.phase === 'TURN');
       expect(gameTwoTurn.turnPlayerId).toBe(created.playerId);
@@ -389,7 +397,7 @@ describe('raw WebSocket transport', () => {
       for (const frame of stateFrames) {
         const state = frame.payload as GameView;
         const hostAlive = state.players.find((player) => player.playerId === created.playerId)?.alive ?? false;
-        const expected = !hostAlive ? [] : state.discardCount >= 1 ? afterPlay : initialHand;
+        const expected = !hostAlive ? [] : (state.discardCount ?? 0) >= 1 ? afterPlay : initialHand;
         expect(state.hand).toEqual(expected);
       }
 

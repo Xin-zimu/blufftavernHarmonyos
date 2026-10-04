@@ -7,13 +7,20 @@ import { common } from '@kit.AbilityKit'
 import { SessionStore, globalSessionStore } from '../store/SessionStore'
 import { SessionPersistence } from '../store/SessionPersistence'
 import { SocketManager } from '../net/SocketManager'
+import { ServerConfig } from '../net/ServerConfig'
 import { AudioManager } from '../audio/AudioManager'
+import { accessibility } from '@kit.AccessibilityKit'
+
+function onAnimationReduceChanged(enabled: boolean): void {
+  globalSessionStore.systemReduceMotion = enabled
+}
 
 export default class EntryAbility extends UIAbility {
   private sessionStore: SessionStore = globalSessionStore
   private sessionPersistence: SessionPersistence = new SessionPersistence()
   private socketManager: SocketManager = new SocketManager(this.sessionStore, this.sessionPersistence)
   private audioManager: AudioManager = new AudioManager()
+  private motionListenerActive: boolean = false
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     // 初始化全局状态
@@ -24,6 +31,13 @@ export default class EntryAbility extends UIAbility {
 
     // 检测设备性能
     this.detectDevicePerformance()
+    try {
+      this.sessionStore.systemReduceMotion = accessibility.isAnimationReduceEnabledSync()
+      accessibility.onAnimationReduceStateChange(onAnimationReduceChanged)
+      this.motionListenerActive = true
+    } catch (error) {
+      // 不支持系统偏好的设备仍可使用游戏内的手动动画开关。
+    }
 
     // 初始化音效管理器（传入 AbilityContext）
     this.audioManager.init(this.context)
@@ -59,7 +73,7 @@ export default class EntryAbility extends UIAbility {
   onWindowStageDestroy(): void {
     // 断开 Socket 连接
     this.socketManager.disconnect()
-    this.audioManager.release()
+    // 音频统一在 onDestroy 释放，避免两个生命周期回调并发关闭 rawfile 描述符。
   }
 
   onForeground(): void {
@@ -73,15 +87,22 @@ export default class EntryAbility extends UIAbility {
     // 应用进入后台时保持连接（游戏需要断线重连）
   }
 
+  onDestroy(): void {
+    if (this.motionListenerActive) {
+      accessibility.offAnimationReduceStateChange(onAnimationReduceChanged)
+      this.motionListenerActive = false
+    }
+    this.socketManager.disconnect()
+    this.audioManager.release()
+  }
+
   // 检测设备性能
   private detectDevicePerformance(): void {
     this.sessionStore.lowPowerActive = false
   }
 
-  // 获取服务器地址
-  // 开发阶段：修改此处 IP 地址指向你的 Node.js 服务器
-  // 生产环境：改为正式域名
+  // 获取服务器地址（集中配置于 net/ServerConfig.ets）
   getServerUrl(): string {
-    return 'http://192.168.2.66:3001'
+    return ServerConfig.SERVER_URL
   }
 }

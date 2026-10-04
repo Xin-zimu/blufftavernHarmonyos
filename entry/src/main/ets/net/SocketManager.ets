@@ -18,11 +18,12 @@ import {
   ReadyRoomPayload, UpdateRoomSettingsPayload, KickPlayerPayload,
   StartGamePayload, PlayCardsPayload, ChallengePayload,
   RestartGamePayload, ReturnToRoomPayload, ResumeSessionPayload,
-  SelectCharacterPayload, SendEmotePayload,
+  SelectCharacterPayload, SendEmotePayload, UseItemPayload,
   validateNickname, validateRoomCode, validateCardIndexes,
   makeErrorAck, ClientEvents, ServerEvents
 } from '../model/Protocol'
-import { V6GameMode, CharacterId, EmoteId } from '../model/GameTypes'
+import { V7ExtensionSettings, PlayableGameMode, CharacterId, EmoteId, ItemId } from '../model/GameTypes'
+import { MAX_CARDS_PER_PLAY } from '../model/Constants'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 
 const DOMAIN: number = 0x0000
@@ -52,6 +53,17 @@ export class SocketManager {
   private serverUrl: string = ''
   // 最近应用的快照序列号；服务端每局游戏重置序列，因此开局/重启/返回大厅/恢复会话时需重置
   private lastSequence: number = -1
+  // 同序列号的最近 serverNow，用于平手判定（与网页版 shouldAcceptGameSnapshot 一致）
+  private lastServerNow: number = -1
+  // 权威重同步节流（网页版 RESYNC_THROTTLE_MS = 4000）
+  private lastResyncAt: number = 0
+  private sessionEpoch: number = 0
+  private transportEpoch: number = 0
+  private recoveryBlocked: boolean = false
+  private resumeInFlight: boolean = false
+  private resumeSerial: number = 0
+  private resumeRetryTimer: number = -1
+  private retiredMatchIds: string[] = []
 
   constructor(store: SessionStore, persistence: SessionPersistence) {
     this.store = store
@@ -68,14 +80,18 @@ export class SocketManager {
       }
       this.transport.disconnect()
     }
+    const epoch: number = ++this.transportEpoch
     const transport: WsTransport = new WsTransport(
       (event: string, payload: ESObject): void => {
+        if (epoch !== this.transportEpoch) return
         this.handlePush(event, payload)
       },
       (): void => {
+        if (epoch !== this.transportEpoch) return
         this.handleOpen()
       },
       (willReconnect: boolean): void => {
+        if (epoch !== this.transportEpoch) return
         this.handleClose(willReconnect)
       }
     )
@@ -85,6 +101,8 @@ export class SocketManager {
   }
 
   disconnect(): void {
+    this.transportEpoch++
+    this.cancelResume()
     if (this.transport !== null) {
       this.transport.disconnect()
       this.transport = null
@@ -104,6 +122,7 @@ export class SocketManager {
   }
 
   private handleClose(willReconnect: boolean): void {
+    this.cancelResume()
     this.store.setConnection(willReconnect ? 'connecting' : 'disconnected')
   }
 
@@ -114,24 +133,28 @@ export class SocketManager {
       case ServerEvents.ROOM_STATE: {
         const room: RoomView | null = parseRoomView(payload)
         if (room !== null) {
+          this.prepareRoomState(room)
           this.store.updateRoom(room)
         }
         break
       }
       case ServerEvents.ROOM_CLOSED:
-        this.resetGameTracking()
-        this.store.leaveRoom()
+        this.endSession()
         this.store.setNotice('房间已关闭')
         break
       case ServerEvents.ROOM_KICKED: {
         const message: string = typeof payload === 'string' ? payload : '你已被移出房间'
-        this.resetGameTracking()
-        this.store.leaveRoom()
+        this.endSession()
         this.store.setNotice(message)
         break
       }
       case ServerEvents.SESSION_REPLACED: {
         const message: string = typeof payload === 'string' ? payload : '你的会话已在新连接中恢复'
+        // endSession 递增 sessionEpoch，挂起 ACK 一律作废。
+        // 不主动 disconnect：保持传输连接（对齐网页版），recoveryBlocked
+        // 已阻止自动 resume，用户可立即创建/加入新房间。
+        this.endSession()
+        this.recoveryBlocked = true
         this.store.setNotice(message)
         break
       }
@@ -172,44 +195,136 @@ export class SocketManager {
   // ====== 快照序列去重 ======
 
   private applyGameSnapshot(snapshot: GameSnapshot): void {
+    if (this.recoveryBlocked || this.store.room === null) return
+    if (snapshot.matchId.length > 0 && this.retiredMatchIds.indexOf(snapshot.matchId) >= 0) return
+    const previous: GameSnapshot | null = this.store.game
+    if (previous !== null && previous.matchId.length > 0 && snapshot.matchId.length > 0 &&
+      previous.matchId !== snapshot.matchId) {
+      this.clearMatch()
+    }
+    // 快照接受门卫：sequence 严格递增；相同 sequence 时要求 serverNow 不回退
     if (snapshot.sequence < this.lastSequence) {
-      // 丢弃过期快照（乱序到达的旧状态）
+      return
+    }
+    if (snapshot.sequence === this.lastSequence && snapshot.serverNow < this.lastServerNow) {
       return
     }
     this.lastSequence = snapshot.sequence
+    this.lastServerNow = snapshot.serverNow
     this.store.setGame(snapshot)
   }
 
   private resetGameTracking(): void {
     this.lastSequence = -1
+    this.lastServerNow = -1
+  }
+
+  private clearMatch(): void {
+    const matchId: string = this.store.game?.matchId ?? ''
+    if (matchId.length > 0 && this.retiredMatchIds.indexOf(matchId) < 0) {
+      this.retiredMatchIds.push(matchId)
+    }
+    this.resetGameTracking()
+    this.store.clearGame()
+  }
+
+  private prepareRoomState(room: RoomView): void {
+    const previous: RoomView | null = this.store.room
+    // 兼容尚未携带 matchId 的服务端：restart 的权威房间状态先于新快照到达。
+    if (room.status === 'LOBBY' || (previous !== null && previous.code !== room.code) ||
+      (room.status === 'PLAYING' && (previous?.status === 'GAME_OVER' || this.store.game?.phase === 'GAME_OVER'))) {
+      if (this.store.game !== null) this.clearMatch()
+    }
+  }
+
+  private cancelResume(): void {
+    this.resumeSerial++
+    this.resumeInFlight = false
+    if (this.resumeRetryTimer !== -1) clearTimeout(this.resumeRetryTimer)
+    this.resumeRetryTimer = -1
+  }
+
+  private endSession(): void {
+    this.sessionEpoch++
+    this.cancelResume()
+    this.clearMatch()
+    this.retiredMatchIds = []
+    this.store.leaveRoom()
+    this.persistence.clearToken()
+  }
+
+  private beginMembership(room: RoomView, playerId: string, token: string): void {
+    this.sessionEpoch++
+    this.cancelResume()
+    this.recoveryBlocked = false
+    this.clearMatch()
+    this.retiredMatchIds = []
+    this.lastResyncAt = 0
+    this.store.enterRoom(room, playerId, token)
+    this.persistence.saveToken(token)
   }
 
   // ====== 会话恢复 ======
 
+  // 请求权威重同步：节流 4 秒（网页版 RESYNC_THROTTLE_MS）
+  requestAuthoritativeResync(): void {
+    const now: number = Date.now()
+    if (now - this.lastResyncAt < 4000) {
+      return
+    }
+    this.tryResumeSession()
+  }
+
+  // 操作被服务器按相位拒绝时触发重同步（网页版 RESYNC_ON_ERROR_CODES）
+  private maybeResyncFromError(code: string | undefined): void {
+    if (code === undefined) {
+      return
+    }
+    if (code === 'NOT_YOUR_TURN' || code === 'PHASE_LOCKED' || code === 'MUST_CHALLENGE' || code === 'CHALLENGE_WINDOW_CLOSED') {
+      this.requestAuthoritativeResync()
+    }
+  }
+
   private tryResumeSession(): void {
     const token: string | null = this.store.sessionToken
-    if (token === null || token.length === 0) return
+    if (this.recoveryBlocked || this.resumeInFlight || !this.isConnected() || token === null || token.length === 0) return
+    if (this.resumeRetryTimer !== -1) clearTimeout(this.resumeRetryTimer)
+    this.resumeRetryTimer = -1
+    this.lastResyncAt = Date.now()
+    this.resumeInFlight = true
+    const serial: number = ++this.resumeSerial
 
     const payload: ResumeSessionPayload = new ResumeSessionPayload()
     payload.sessionToken = token
 
     this.sendCommand(ClientEvents.SESSION_RESUME, payload, (result: AckResult) => {
+      if (serial !== this.resumeSerial || this.recoveryBlocked || token !== this.store.sessionToken) return
+      this.resumeInFlight = false
       if (result.ok) {
         const data: SessionResumeResult | null = parseSessionResumeResult(result.data)
         if (data !== null) {
+          this.prepareRoomState(data.room)
           this.store.enterRoom(data.room, data.playerId, data.sessionToken)
           this.persistence.saveToken(data.sessionToken)
-          this.resetGameTracking()
           if (data.game !== null) {
             this.applyGameSnapshot(data.game)
+          } else {
+            this.clearMatch()
           }
           hilog.info(DOMAIN, TAG, `session resumed: room=${data.room.code}`)
         }
       } else {
-        // 会话已失效（房间关闭/令牌过期）：清除本地令牌，用户需重新加入
         hilog.warn(DOMAIN, TAG, `session resume failed: ${result.error.code}`)
-        this.store.sessionToken = null
-        this.persistence.clearToken()
+        if (result.error.code === 'SESSION_NOT_FOUND') {
+          this.endSession()
+          this.store.setNotice(result.error.message)
+        } else {
+          // 传输/限流/服务端暂时故障不能撤销凭证；只允许一个延迟重试。
+          this.resumeRetryTimer = setTimeout(() => {
+            this.resumeRetryTimer = -1
+            if (serial === this.resumeSerial && token === this.store.sessionToken) this.tryResumeSession()
+          }, 4000)
+        }
       }
     })
   }
@@ -224,7 +339,12 @@ export class SocketManager {
       }
       return
     }
-    transport.send(event, payload, callback)
+    const epoch: number = this.sessionEpoch
+    const connectionEpoch: number = this.transportEpoch
+    transport.send(event, payload, (result: AckResult): void => {
+      if (epoch !== this.sessionEpoch || connectionEpoch !== this.transportEpoch || transport !== this.transport) return
+      if (callback !== undefined) callback(result)
+    })
   }
 
   // ====== 客户端操作方法 ======
@@ -246,8 +366,7 @@ export class SocketManager {
         const membership = parseRoomMembership(result.data)
         hilog.info(DOMAIN, TAG, `createRoom membership parse: ${membership === null ? 'null' : membership.room.code}`)
         if (membership !== null) {
-          this.store.enterRoom(membership.room, membership.playerId, membership.sessionToken)
-          this.persistence.saveToken(membership.sessionToken)
+          this.beginMembership(membership.room, membership.playerId, membership.sessionToken)
           if (callback) callback(true)
         } else {
           if (callback) callback(false, '服务器响应异常')
@@ -278,8 +397,7 @@ export class SocketManager {
       if (result.ok) {
         const membership = parseRoomMembership(result.data)
         if (membership !== null) {
-          this.store.enterRoom(membership.room, membership.playerId, membership.sessionToken)
-          this.persistence.saveToken(membership.sessionToken)
+          this.beginMembership(membership.room, membership.playerId, membership.sessionToken)
           if (callback) callback(true)
         } else {
           if (callback) callback(false, '服务器响应异常')
@@ -302,9 +420,7 @@ export class SocketManager {
 
     this.sendCommand(ClientEvents.ROOM_LEAVE, payload, (result: AckResult) => {
       if (result.ok) {
-        this.resetGameTracking()
-        this.store.leaveRoom()
-        this.persistence.clearToken()
+        this.endSession()
         if (callback) callback(true)
       } else {
         if (callback) callback(false)
@@ -337,8 +453,9 @@ export class SocketManager {
     })
   }
 
-  // 更新房间设置（仅 maxPlayers / gameMode）
-  updateSettings(maxPlayers: number, gameMode: string, callback?: (success: boolean) => void): void {
+  // 更新房间设置（7.2：完整字段，与网页版 updateSettings 载荷一致）
+  updateSettings(maxPlayers: number, gameMode: PlayableGameMode,
+    turnDurationSeconds: number, v7: V7ExtensionSettings, callback?: (success: boolean) => void): void {
     if (!this.store.room) {
       if (callback) callback(false)
       return
@@ -347,7 +464,11 @@ export class SocketManager {
     const payload: UpdateRoomSettingsPayload = new UpdateRoomSettingsPayload()
     payload.roomCode = this.store.room.code
     payload.maxPlayers = maxPlayers
-    payload.gameMode = gameMode as V6GameMode
+    payload.gameMode = gameMode
+    payload.turnDurationSeconds = turnDurationSeconds
+    payload.eventEnabled = false
+    payload.bulletCount = null
+    payload.v7 = v7
     payload.requestId = generateUUID()
 
     this.sendCommand(ClientEvents.ROOM_UPDATE_SETTINGS, payload, (result: AckResult) => {
@@ -425,7 +546,6 @@ export class SocketManager {
 
     this.sendCommand(ClientEvents.GAME_START, payload, (result: AckResult) => {
       if (result.ok) {
-        this.resetGameTracking()
         const snapshot: GameSnapshot | null = parseGameSnapshot(result.data)
         if (snapshot !== null) {
           this.applyGameSnapshot(snapshot)
@@ -443,8 +563,12 @@ export class SocketManager {
       if (callback) callback(false, '未在房间中')
       return
     }
-    if (!validateCardIndexes(cardIndexes)) {
-      if (callback) callback(false, '选牌无效')
+    // 按当前快照的动态出牌范围校验（7.2：minimum/maximumPlayCount 随模式/事件变化）
+    const game: GameSnapshot | null = this.store.game
+    const minCount: number = game !== null ? game.minimumPlayCount : 1
+    const maxCount: number = game !== null ? game.maximumPlayCount : MAX_CARDS_PER_PLAY
+    if (!validateCardIndexes(cardIndexes, minCount, maxCount)) {
+      if (callback) callback(false, '选牌数量无效')
       return
     }
 
@@ -461,6 +585,7 @@ export class SocketManager {
         }
         if (callback) callback(true)
       } else {
+        this.maybeResyncFromError(result.error.code)
         if (callback) callback(false, getErrorMessage(result, '出牌失败'))
       }
     })
@@ -485,7 +610,34 @@ export class SocketManager {
         }
         if (callback) callback(true)
       } else {
+        this.maybeResyncFromError(result.error.code)
         if (callback) callback(false, getErrorMessage(result, '质疑失败'))
+      }
+    })
+  }
+
+  // 使用道具
+  useItem(itemId: ItemId, callback?: (success: boolean, error?: string) => void): void {
+    if (!this.store.room) {
+      if (callback) callback(false, '未在房间中')
+      return
+    }
+
+    const payload: UseItemPayload = new UseItemPayload()
+    payload.roomCode = this.store.room.code
+    payload.itemId = itemId
+    payload.requestId = generateUUID()
+
+    this.sendCommand(ClientEvents.GAME_USE_ITEM, payload, (result: AckResult) => {
+      if (result.ok) {
+        const snapshot: GameSnapshot | null = parseGameSnapshot(result.data)
+        if (snapshot !== null) {
+          this.applyGameSnapshot(snapshot)
+        }
+        if (callback) callback(true)
+      } else {
+        this.maybeResyncFromError(result.error.code)
+        if (callback) callback(false, getErrorMessage(result, '道具使用失败'))
       }
     })
   }
@@ -503,7 +655,6 @@ export class SocketManager {
 
     this.sendCommand(ClientEvents.GAME_RESTART, payload, (result: AckResult) => {
       if (result.ok) {
-        this.resetGameTracking()
         const snapshot: GameSnapshot | null = parseGameSnapshot(result.data)
         if (snapshot !== null) {
           this.applyGameSnapshot(snapshot)

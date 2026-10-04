@@ -6,10 +6,10 @@ import {
   GameSnapshot, GameCue, GameSummary, ChallengeResult,
   PublicPlayerState, PublicLastPlay, PublicChallengeState, PublicPunishmentState,
   PublicWinnerState, PublicSharedRevolverState, PublicTavernEvent,
-  PublicFreeChallengeWindow, PrivateItemEffect, PrivateAbilityEffect,
+  PublicPartyEventHistoryEntry, PublicFreeChallengeWindow, PrivateItemEffect, PrivateAbilityEffect,
   V7ExtensionSettings,
   GamePhase, PlayableGameMode, TargetRank, CardRank, GameCueType, TurnDirection,
-  CharacterId, PlayerStatus, RoomStatus, GameMode, TavernEventType,
+  CharacterId, PlayerStatus, RoomStatus, GameMode, TavernEventType, PartyEventCategory,
   ItemEffectType, ItemRiskLevel, AbilityEffectType, CharacterAbilityId, ActiveItemId
 } from './GameTypes'
 
@@ -177,7 +177,7 @@ function parsePublicLastPlay(raw: ESObject): PublicLastPlay | null {
   if (rec === null) return null
   const play: PublicLastPlay = new PublicLastPlay()
   play.playerId = recStr(rec, 'playerId', '')
-  play.count = recNum(rec, 'count', 0)
+  play.count = recNumOrNull(rec, 'count')
   play.claimedRank = recStr(rec, 'claimedRank', 'A') as TargetRank
   return play
 }
@@ -244,13 +244,25 @@ function parsePublicTavernEvent(raw: ESObject): PublicTavernEvent | null {
   const rec: Record<string, ESObject> | null = asRecord(raw)
   if (rec === null) return null
   const event: PublicTavernEvent = new PublicTavernEvent()
-  event.type = recStr(rec, 'type', 'BLACKOUT') as TavernEventType
+  event.type = recStr(rec, 'type', 'HIDDEN_BET') as TavernEventType
   event.title = recStr(rec, 'title', '')
   event.description = recStr(rec, 'description', '')
+  const category: string | null = recStrOrNull(rec, 'category')
+  event.category = category === null ? null : (category as PartyEventCategory)
   event.roundNumber = recNum(rec, 'roundNumber', 0)
   event.turnDurationSeconds = recNumOrNull(rec, 'turnDurationSeconds')
   event.intensity = recStr(rec, 'intensity', 'LOW')
   return event
+}
+
+function parsePartyEventHistoryEntry(raw: ESObject): PublicPartyEventHistoryEntry | null {
+  const rec: Record<string, ESObject> | null = asRecord(raw)
+  if (rec === null) return null
+  const entry: PublicPartyEventHistoryEntry = new PublicPartyEventHistoryEntry()
+  entry.roundNumber = recNum(rec, 'roundNumber', 0)
+  entry.type = recStr(rec, 'type', 'HIDDEN_BET') as TavernEventType
+  entry.title = recStr(rec, 'title', '')
+  return entry
 }
 
 function parsePublicFreeChallengeWindow(raw: ESObject): PublicFreeChallengeWindow | null {
@@ -334,6 +346,7 @@ export function parseGameSnapshot(raw: ESObject): GameSnapshot | null {
   const rec: Record<string, ESObject> | null = asRecord(raw)
   if (rec === null) return null
   const snapshot: GameSnapshot = new GameSnapshot()
+  snapshot.matchId = recStr(rec, 'matchId', '')
   snapshot.sequence = recNum(rec, 'sequence', 0)
   snapshot.serverNow = recNum(rec, 'serverNow', 0)
   snapshot.phase = recStr(rec, 'phase', 'LOBBY') as GamePhase
@@ -348,6 +361,7 @@ export function parseGameSnapshot(raw: ESObject): GameSnapshot | null {
   snapshot.turnPlayerId = recStrOrNull(rec, 'turnPlayerId')
   snapshot.mustChallenge = recBool(rec, 'mustChallenge', false)
   snapshot.minimumPlayCount = recNum(rec, 'minimumPlayCount', 1)
+  snapshot.maximumPlayCount = recNum(rec, 'maximumPlayCount', 3)
   snapshot.turnDirection = recStr(rec, 'turnDirection', 'CLOCKWISE') as TurnDirection
 
   const playersRaw: ESObject[] | null = recArr(rec, 'players')
@@ -369,7 +383,7 @@ export function parseGameSnapshot(raw: ESObject): GameSnapshot | null {
       }
     }
   }
-  snapshot.discardCount = recNum(rec, 'discardCount', 0)
+  snapshot.discardCount = recNumOrNull(rec, 'discardCount')
   snapshot.lastPlay = parsePublicLastPlay(rec['lastPlay'])
   snapshot.challenge = parsePublicChallengeState(rec['challenge'])
   snapshot.punishment = parsePublicPunishmentState(rec['punishment'])
@@ -382,6 +396,16 @@ export function parseGameSnapshot(raw: ESObject): GameSnapshot | null {
   snapshot.summary = parseGameSummary(rec['summary'])
 
   snapshot.tavernEvent = parsePublicTavernEvent(rec['tavernEvent'])
+  const historyRaw: ESObject[] | null = recArr(rec, 'partyEventHistory')
+  if (historyRaw !== null) {
+    for (let i: number = 0; i < historyRaw.length; i++) {
+      const entryRaw: ESObject = historyRaw[i]
+      const entry: PublicPartyEventHistoryEntry | null = parsePartyEventHistoryEntry(entryRaw)
+      if (entry !== null) {
+        snapshot.partyEventHistory.push(entry)
+      }
+    }
+  }
   const itemsRaw: ESObject[] | null = recArr(rec, 'items')
   if (itemsRaw !== null) {
     for (let i: number = 0; i < itemsRaw.length; i++) {

@@ -14,6 +14,8 @@ const KEY_TOKEN: string = 'sessionToken'
 
 export class SessionPersistence {
   private store: preferences.Preferences | null = null
+  // 顺序提交，防止较早 save 的异步完成覆盖 session:replaced 后的清除。
+  private pendingWrite: Promise<void> = Promise.resolve()
 
   // 初始化 Preferences（应用启动时调用一次）
   async init(context: Context): Promise<void> {
@@ -39,7 +41,12 @@ export class SessionPersistence {
   }
 
   // 保存会话令牌
-  async saveToken(token: string): Promise<void> {
+  saveToken(token: string): Promise<void> {
+    this.pendingWrite = this.pendingWrite.then(() => this.writeToken(token))
+    return this.pendingWrite
+  }
+
+  private async writeToken(token: string): Promise<void> {
     if (this.store === null || token.length === 0) return
     try {
       await this.store.put(KEY_TOKEN, token)
@@ -51,7 +58,12 @@ export class SessionPersistence {
   }
 
   // 清除会话令牌
-  async clearToken(): Promise<void> {
+  clearToken(): Promise<void> {
+    this.pendingWrite = this.pendingWrite.then(() => this.deleteToken())
+    return this.pendingWrite
+  }
+
+  private async deleteToken(): Promise<void> {
     if (this.store === null) return
     try {
       await this.store.delete(KEY_TOKEN)

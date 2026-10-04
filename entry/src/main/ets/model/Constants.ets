@@ -4,7 +4,7 @@
 import { CharacterId, ItemId, EmoteId, CharacterMood } from './GameTypes'
 
 export const ROOM_CODE_LENGTH: number = 6
-export const APP_VERSION: string = '6.7.0'
+export const APP_VERSION: string = '7.2.0'
 export const ROOM_CODE_ALPHABET: string = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
 export const MIN_NICKNAME_LENGTH: number = 1
 export const MAX_NICKNAME_LENGTH: number = 16
@@ -90,9 +90,33 @@ export const CHARACTER_NAMES: Map<string, string> = new Map<string, string>([
 
 // 道具中文名映射
 export const ITEM_NAMES: Map<string, string> = new Map<string, string>([
-  ['SPYGLASS', '窥牌镜'],
+  ['SPYGLASS', '望远镜'],
   ['SWAP_GLOVE', '换牌手套'],
   ['WAX_SEAL', '封口蜡印'],
-  ['TAVERN_MUG', '酒馆木杯'],
+  ['TAVERN_MUG', '酒杯'],
   ['POCKET_WATCH', '旧怀表'],
+])
+
+// 角色技能名映射（7.2 LobbyScreen/ART 对齐）
+export const CHARACTER_ABILITY_NAMES: Map<string, string> = new Map<string, string>([
+  ['WOLF', '牌桌嗅觉'],
+  ['FOX', '花言'],
+  ['BEAR', '稳坐'],
+  ['RABBIT', '抢秒'],
+  ['CAT', '夜眼'],
+  ['RACCOON', '摸袋'],
+  ['FROG', '沉息'],
+  ['PANDA', '记牌'],
+])
+
+// 角色技能描述映射
+export const CHARACTER_ABILITY_DESCRIPTIONS: Map<string, string> = new Map<string, string>([
+  ['WOLF', '每轮自己的第一次回合获得公开局势和手牌目标数提示。'],
+  ['FOX', '本局第一次自己的回合获得一次低风险出牌建议。'],
+  ['BEAR', '作为本轮先手时，自己的开局回合小幅延长。'],
+  ['RABBIT', '本局第一次自己的回合小幅延长。'],
+  ['CAT', '每轮开始时获得下一次自己受罚的高低风险提示。'],
+  ['RACCOON', '若同时启用道具，开局额外摸到一件低风险道具。'],
+  ['FROG', '本局第一次被迫质疑时额外获得思考时间。'],
+  ['PANDA', '每次揭牌结论时获得本次已公开牌面的记牌摘要。'],
 ])

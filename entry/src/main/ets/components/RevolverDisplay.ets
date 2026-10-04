@@ -1,28 +1,22 @@
-// 左轮手枪显示组件 - 显示弹巢状态和惩罚结果
-// 注：cinematic_revolver_side_v1 资源不存在，用 Text 图标替代
+// 左轮手枪显示组件 - 惩罚相位显示弹巢状态和结果
 
 import { PublicPunishmentState } from '../model/GameTypes'
 
-@Component
+@ComponentV2
 export struct RevolverDisplay {
-  @Prop punishment: PublicPunishmentState | null = null
+  @Param punishment: PublicPunishmentState | null = null
 
   build() {
     if (this.punishment !== null) {
       Column() {
-        // 左轮手枪图标（用文字替代，资源文件不存在）
-        Text('🔫')
-          .fontSize(48)
-          .margin({ bottom: 8 })
-
-        // 弹巢位置指示
+        // 弹巢位置指示（6 膛位）
         Row() {
           ForEach([0, 1, 2, 3, 4, 5], (chamber: number) => {
             Circle()
-              .width(20)
-              .height(20)
-              .fill(chamber === this.punishment?.chamber ? '#FF6B6B' : '#2A2A4E')
-              .stroke(chamber === this.punishment?.chamber ? '#FF6B6B' : '#444466')
+              .width(18)
+              .height(18)
+              .fill(chamber === this.punishment?.chamber ? '#FF756D' : '#2B1914')
+              .stroke(chamber === this.punishment?.chamber ? '#FF756D' : '#4D3830')
               .strokeWidth(1)
               .margin({ left: 4, right: 4 })
           })
@@ -30,30 +24,31 @@ export struct RevolverDisplay {
         .margin({ bottom: 8 })
 
         // 结果显示
-        if (this.punishment?.hit) {
-          Text('中弹!')
-            .fontSize(24)
-            .fontColor('#FF6B6B')
+        if (this.punishment?.hit === true) {
+          Text('中弹淘汰')
+            .fontSize(20)
+            .fontColor('#FF756D')
             .fontWeight(FontWeight.Bold)
         } else {
-          Text('空枪')
-            .fontSize(24)
-            .fontColor('#4CAF50')
+          Text('空枪，继续游戏')
+            .fontSize(20)
+            .fontColor('#F2C777')
             .fontWeight(FontWeight.Bold)
         }
 
-        // 淘汰信息
-        if (this.punishment?.eliminatedPlayerId !== null && this.punishment?.eliminatedPlayerId !== undefined) {
-          Text('玩家被淘汰')
-            .fontSize(14)
-            .fontColor('#FF6B6B')
+        // 连击信息（双倍危机）
+        if (this.punishment !== null && this.punishment.totalShots > 1) {
+          Text(`第 ${this.punishment.shotNumber}/${this.punishment.totalShots} 枪`)
+            .fontSize(12)
+            .fontColor('#A67C3D')
             .margin({ top: 4 })
         }
       }
-      .width('90%')
-      .padding(16)
-      .backgroundColor('#2A2A4E')
-      .borderRadius(8)
+      .width('100%')
+      .padding(14)
+      .backgroundColor('#231713')
+      .borderRadius(10)
+      .border({ width: 1, color: '#4D3830', style: BorderStyle.Solid })
       .alignItems(HorizontalAlign.Center)
     } else {
       Blank()

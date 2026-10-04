@@ -340,10 +340,11 @@ export class CommandDispatcher {
       const ackResult: Ack<GameView> = { ok: true, data: result.state };
       this.processedGameRequests.set(key, ackResult);
       this.logger.info({ event: 'cards_played', roomCode: parsed.data.roomCode, playerId: identity.playerId, count: result.cue.count });
-      this.emitCue(result.cue);
+      const publicCount = result.state.tavernEvent?.type === 'HIDDEN_BET' ? null : result.cue.count ?? 0;
+      this.emitCue(publicCount === null ? omitCueCount(result.cue) : result.cue);
       this.publisher.broadcastToRoom(parsed.data.roomCode, 'game:cardsPlayed', {
         playerId: identity.playerId,
-        count: result.cue.count ?? 0,
+        count: publicCount,
         roundNumber: result.state.roundNumber,
       });
       this.broadcastGameSnapshots(parsed.data.roomCode);
@@ -586,6 +587,12 @@ export class CommandDispatcher {
   private emitCue(cue: GameCue): void {
     this.publisher.broadcastToRoom(cue.roomCode, 'game:cue', cue);
   }
+}
+
+function omitCueCount(cue: GameCue): GameCue {
+  const withoutCount = { ...cue };
+  delete withoutCount.count;
+  return withoutCount;
 }
 
 function roomRequestKey(roomCode: string, playerId: string, requestId: string): string {

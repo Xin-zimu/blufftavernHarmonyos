@@ -25,6 +25,8 @@ export class SessionStore {
 
   // 当前游戏视图
   @Trace game: GameSnapshot | null = null
+  // 显式新局边界：页面即使合并 null→新快照的通知，也能清理旧演出和选牌。
+  @Trace gameEpoch: number = 0
 
   // 服务器时间偏移（用于倒计时计算）
   @Trace serverTimeOffset: number = 0
@@ -34,6 +36,12 @@ export class SessionStore {
 
   // 动画偏好
   @Trace motionPreference: string = 'system' // 'system' | 'full' | 'reduced'
+  @Trace systemReduceMotion: boolean = false
+
+  get reduceMotion(): boolean {
+    return this.motionPreference === 'reduced' ||
+      (this.motionPreference === 'system' && this.systemReduceMotion)
+  }
 
   // ====== 操作方法 ======
 
@@ -76,6 +84,7 @@ export class SessionStore {
   }
 
   clearGame(): void {
+    this.gameEpoch++
     this.game = null
   }
 
