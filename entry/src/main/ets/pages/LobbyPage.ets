@@ -5,7 +5,7 @@
 import { SessionStore, globalSessionStore } from '../store/SessionStore'
 import { SessionPersistence } from '../store/SessionPersistence'
 import { SocketManager } from '../net/SocketManager'
-import { router } from '@kit.ArkUI'
+import { router, SymbolGlyphModifier } from '@kit.ArkUI'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { BusinessError } from '@kit.BasicServicesKit'
@@ -107,6 +107,10 @@ struct LobbyPage {
   private isTop: boolean = true
   private navGuard: boolean = false
   private exitGuard: boolean = false
+  // 最大人数下拉箭头：金色下箭头（深棕底上清晰可见）
+  private selectArrowModifier: SymbolGlyphModifier = new SymbolGlyphModifier($r('sys.symbol.chevron_down'))
+    .fontColor(['#D4A85D'])
+    .fontSize(16)
 
   aboutToAppear(): void {
     const sm: SocketManager | undefined = AppStorage.get<SocketManager>('socketManager')
@@ -650,12 +654,19 @@ struct LobbyPage {
             .selected(this.getMaxPlayers() - MIN_PLAYERS)
             .value(`${this.getMaxPlayers()} 人`)
             .font({ size: 13 })
+            .fontColor('#E8DDC8')
             .selectedOptionFontColor('#F2C777')
             .optionFontColor('#E8DDC8')
-            .backgroundColor('#120D0B')
+            .backgroundColor('#231713')
             .borderRadius(4)
+            .border({ width: 1, color: '#A67C3D' })
             .height(38)
             .width(110)
+            .menuBackgroundColor('#231713')
+            .optionBgColor('#231713')
+            .selectedOptionBgColor('#8B303D')
+            .divider({ strokeWidth: 1, color: '#3A2921', startMargin: 8, endMargin: 8 })
+            .arrowModifier(this.selectArrowModifier)
             .onSelect((index: number) => {
               this.updateMaxPlayers(index + MIN_PLAYERS)
             })
