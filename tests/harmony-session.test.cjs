@@ -85,10 +85,11 @@ test('replacement fences late resume, command ACK, old transport callbacks and f
   f.transport.open();f.transport.push('room:state',f.room());f.transport.push('game:snapshot',f.snap(99));
   f.manager.connect('http://test.invalid'); f.manager.requestAuthoritativeResync();f.advance(20000);
   assert.equal(f.store.sessionToken,null);assert.equal(f.store.room,null);assert.equal(f.store.game,null);
-  assert.equal(f.persistence.saved.length,0);assert.equal(f.manager.transport.sent.length,0);
+  // Replacement intentionally keeps the connected transport for fresh membership.
+  assert.equal(f.persistence.saved.length,0);assert.equal(f.manager.transport.sent.length,2);
   // Explicit fresh membership is still allowed; no recovery of token-A.
   f.manager.createRoom('新玩家');
-  f.manager.transport.sent[0].callback({ok:true,data:{room:{code:'NEW123',status:'LOBBY'},playerId:'p2',sessionToken:'token-B'}});
+  f.manager.transport.sent[2].callback({ok:true,data:{room:{code:'NEW123',status:'LOBBY'},playerId:'p2',sessionToken:'token-B'}});
   assert.equal(f.store.sessionToken,'token-B');assert.equal(f.manager.recoveryBlocked,false);
   lateResume(f.success(f.snap(6)));assert.equal(f.store.sessionToken,'token-B');
 });
@@ -121,10 +122,13 @@ test('page clears selection and audio scope even when framework coalesces new-ma
   const body=source.slice(source.indexOf('  onGameChange('),source.indexOf('  private playPhaseSound('));
   const code=ts.transpileModule('class Page { '+body+' }; module.exports=Page;',{
     compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
-  const mod={exports:{}};new Function('module',code)(mod);const page=new mod.exports();
+  const {cinematicIdentity}=f.load(path.join(root,'components/CinematicMotion.ets'));
+  const mod={exports:{}};new Function('module','cinematicIdentity','Date',code)(mod,cinematicIdentity,{now:()=>10000});const page=new mod.exports();
   f.store.game=f.snap(1,'ROUND_START','match-B');f.store.gameEpoch=2;
-  Object.assign(page,{store:f.store,presentationEpoch:1,selectedCardIndexes:[0],playedAudioSequence:1,lastPhase:'ROUND_START',lastRoundNumber:1,lastHandKey:'A',shareNotice:'old',showRules:true,played:0,playPhaseSound(){this.played++}});
+  f.store.game.phaseStartedAt=10000;f.store.serverTimeOffset=0;
+  Object.assign(page,{store:f.store,presentationEpoch:1,selectedCardIndexes:[0],playedAudioPhases:new Set(['old']),lastPhase:'ROUND_START',lastRoundNumber:1,lastHandKey:'A',shareNotice:'old',showRules:true,played:0,playPhaseSound(){this.played++}});
   page.onGameChange({});assert.deepEqual(page.selectedCardIndexes,[]);assert.equal(page.played,1);
+  f.store.game.sequence++;page.onGameChange({});assert.equal(page.played,1,'same phase, new sequence does not replay');
   assert.equal(page.showRules,false);assert.equal(page.shareNotice,'');
 });
 test('HIDDEN_BET quantities remain null',()=>{

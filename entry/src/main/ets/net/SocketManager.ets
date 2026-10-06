@@ -131,6 +131,7 @@ export class SocketManager {
   private handlePush(event: string, payload: ESObject): void {
     switch (event) {
       case ServerEvents.ROOM_STATE: {
+        if (this.recoveryBlocked) return
         const room: RoomView | null = parseRoomView(payload)
         if (room !== null) {
           this.prepareRoomState(room)

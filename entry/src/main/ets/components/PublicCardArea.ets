@@ -2,6 +2,7 @@
 // 揭牌相位显示公开牌；平时显示牌背；暗注夜恒 1 张牌背且数量隐藏
 
 import { PublicLastPlay, TargetRank, CardRank } from '../model/GameTypes'
+import { CardArtwork } from './CardArtwork'
 
 const TABLE_REVEAL_PHASES: string[] = ['VERDICT', 'PUNISHMENT_INTRO', 'PUNISHMENT_TRIGGER', 'PUNISHMENT_RESULT', 'ROUND_END']
 
@@ -65,38 +66,17 @@ export struct PublicCardArea {
       if (this.isRevealPhase() && this.revealedCards.length > 0) {
         Row() {
           ForEach(this.revealedCards, (card: CardRank) => {
-            Text(card === 'JOKER' ? '★' : card)
-              .fontSize(20)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#5B1F28')
-              .width(40)
-              .height(56)
-              .textAlign(TextAlign.Center)
-              .backgroundColor('#E8DDC8')
-              .borderRadius(6)
-              .border({ width: 1, color: '#A67C3D', style: BorderStyle.Solid })
-              .margin({ left: 3, right: 3 })
-          })
+            CardArtwork({ rank: card, cardWidth: 40 }).margin({ left: 3, right: 3 })
+          }, (card: CardRank, index: number) => `${index}:${card}`)
+
         }
         .margin({ bottom: 8 })
       } else if (this.getPileBackCount() > 0) {
         Row() {
           ForEach([0, 1, 2], (i: number) => {
             if (i < this.getPileBackCount()) {
-              Column() {
-                Image($r('app.media.card_card_back'))
-                  .width('100%')
-                  .height('100%')
-                  .objectFit(ImageFit.Cover)
-              }
-              .width(36)
-              .height(50)
-              .backgroundColor('#5B1F28')
-              .borderRadius(6)
-              .border({ width: 1, color: '#A67C3D', style: BorderStyle.Solid })
-              .justifyContent(FlexAlign.Center)
-              .alignItems(HorizontalAlign.Center)
-              .margin({ left: 3, right: 3 })
+              CardArtwork({ concealed: true, cardWidth: 36 })
+                .margin({ left: 3, right: 3 })
             }
           })
         }

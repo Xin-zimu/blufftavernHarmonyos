@@ -24,6 +24,7 @@ import { PublicCardArea } from '../components/PublicCardArea'
 import { RevolverDisplay } from '../components/RevolverDisplay'
 import { RulesPanel } from '../components/RulesPanel'
 import { CinematicOverlay } from '../components/CinematicOverlay'
+import { cinematicIdentity } from '../components/CinematicMotion'
 
 // 座位信息（合并房间成员与游戏公开状态，自己排在最后，与网页版一致）
 class SeatInfo {
@@ -64,8 +65,9 @@ struct GamePage {
   private lastTurnPlayerId: string = ''
   private lastRoundNumber: number = -1
   private lastHandKey: string = ''
-  // 音效去重：同 sequence 只播一次
-  private playedAudioSequence: number = -1
+  // Snapshot sequence can change without a new cinematic. Include server start
+  // time so a later punishment shot has its own cue, and matchId for new games.
+  private playedAudioPhases: Set<string> = new Set<string>()
   private presentationEpoch: number = -1
 
   aboutToAppear(): void {
@@ -139,7 +141,7 @@ struct GamePage {
     if (this.presentationEpoch !== this.store.gameEpoch) {
       this.presentationEpoch = this.store.gameEpoch
       this.selectedCardIndexes = []
-      this.playedAudioSequence = -1
+      this.playedAudioPhases.clear()
       this.lastPhase = ''
       this.lastTurnPlayerId = ''
       this.lastRoundNumber = -1
@@ -154,9 +156,13 @@ struct GamePage {
     }
 
     // 相位音效
-    if (game.sequence !== this.playedAudioSequence) {
-      this.playedAudioSequence = game.sequence
-      this.playPhaseSound(game)
+    const audioKey: string = cinematicIdentity(game.matchId, game.roundNumber, game.phase, game.phaseStartedAt)
+    if (!this.playedAudioPhases.has(audioKey)) {
+      this.playedAudioPhases.add(audioKey)
+      // Restoring an ongoing phase must not replay its opening sound. Mark it
+      // consumed even when muted, so unmuting/re-rendering cannot replay it.
+      const elapsed: number = Date.now() + this.store.serverTimeOffset - game.phaseStartedAt
+      if (elapsed >= 0 && elapsed <= 300) this.playPhaseSound(game)
     }
 
     // 选牌作用域检测（与网页版一致：相位/回合人/轮次/手牌任一变化即清空）
@@ -957,6 +963,7 @@ struct GamePage {
 
       // 演出动画覆盖层（相位时钟驱动）
       CinematicOverlay({
+        clockOffset: this.store.serverTimeOffset,
         game: this.store.game,
         syncedNow: this.getSyncedNow(),
         reduceMotion: this.isReducedMotion(),

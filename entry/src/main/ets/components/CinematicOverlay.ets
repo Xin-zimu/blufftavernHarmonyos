@@ -1,9 +1,13 @@
 // 演出动画覆盖层 - 对应网页版 7.2 CinematicLayer.tsx + cinematic-reveal-state.ts
 // 关键原则：所有演出由服务端 phaseStartedAt/phaseEndsAt 驱动
 // progress = (syncedNow - phaseStartedAt) / (phaseEndsAt - phaseStartedAt)
-// 不使用本地 setTimeout 编排；唯一逐帧时刻表是 REVEAL 的 500ms 序 + 每张 750ms
+// 原生 Animator 插值阶段内时间；服务端决定阶段，重复快照不会重启动画。
 
 import { GameSnapshot, CardRank, GamePhase } from '../model/GameTypes'
+import { AnimatorResult } from '@ohos.animator'
+import { CardArtwork } from './CardArtwork'
+import { RevealCard, StaticRevealedCard } from './RevealCard'
+import { keyframe, revealProgress, cinematicIdentity } from './CinematicMotion'
 
 // REVEAL 时刻表（毫秒），与网页版 REVEAL_TIMING 一致
 const REVEAL_INTRO_MS: number = 500
@@ -43,6 +47,64 @@ export struct CinematicOverlay {
   @Param reduceMotion: boolean = false
   @Param lowPower: boolean = false
 
+  @Param clockOffset: number = 0
+  @Local animationElapsed: number = 0
+  private animator: AnimatorResult | null = null
+  private activeIdentity: string = ''
+  private disposed: boolean = false
+
+  aboutToAppear(): void {
+    this.disposed = false
+    this.startPhaseAnimation(true)
+  }
+
+  aboutToDisappear(): void {
+    this.disposed = true
+    this.stopPhaseAnimation()
+  }
+
+  @Monitor('game', 'reduceMotion', 'lowPower')
+  onPhaseSnapshot(monitor: IMonitor): void {
+    const settingsChanged: boolean = monitor.dirty.includes('reduceMotion') || monitor.dirty.includes('lowPower')
+    this.startPhaseAnimation(settingsChanged)
+  }
+
+  private phaseIdentity(): string {
+    if (this.game === null) return ''
+    return cinematicIdentity(this.game.matchId, this.game.roundNumber, this.game.phase, this.game.phaseStartedAt)
+  }
+
+  private stopPhaseAnimation(): void {
+    if (this.animator !== null) {
+      this.animator.onframe = (value: number) => {}
+      this.animator.cancel()
+      this.animator = null
+    }
+  }
+
+  private startPhaseAnimation(force: boolean = false): void {
+    if (this.disposed) return
+    const identity: string = this.phaseIdentity()
+    if (!force && identity === this.activeIdentity) return
+    this.stopPhaseAnimation()
+    this.activeIdentity = identity
+    if (this.game === null) { this.animationElapsed = 0; return }
+    const elapsed: number = Math.max(0, Date.now() + this.clockOffset - this.game.phaseStartedAt)
+    this.animationElapsed = elapsed
+    if (this.reduceMotion || this.lowPower || !this.isVisible()) return
+    const duration: number = this.game.phaseEndsAt === null ? 3001 : this.getDuration()
+    if (elapsed >= duration) return
+    const nativeAnimator: AnimatorResult = this.getUIContext().createAnimator({
+      duration: duration, delay: -elapsed, easing: 'linear',
+      iterations: 1, fill: 'forwards', direction: 'normal', begin: 0, end: duration
+    })
+    nativeAnimator.onframe = (value: number) => {
+      if (!this.disposed && this.activeIdentity === identity) this.animationElapsed = Math.max(this.animationElapsed, value)
+    }
+    this.animator = nativeAnimator
+    nativeAnimator.play()
+  }
+
   private motionDuration(duration: number): number {
     return this.reduceMotion || this.lowPower ? 0 : duration
   }
@@ -50,11 +112,9 @@ export struct CinematicOverlay {
   // ====== 相位时钟计算 ======
 
   private getElapsed(): number {
-    if (this.game === null) {
-      return 0
-    }
-    const elapsed: number = this.syncedNow - this.game.phaseStartedAt
-    return elapsed > 0 ? elapsed : 0
+    if (this.game === null) return 0
+    if (this.reduceMotion || this.lowPower) return Math.max(0, this.syncedNow - this.game.phaseStartedAt)
+    return this.animationElapsed
   }
 
   private getDuration(): number {
@@ -203,38 +263,39 @@ export struct CinematicOverlay {
     if (!this.isVisible()) {
       Blank()
     } else {
-      Stack() {
+      Stack({ alignContent: Alignment.Bottom }) {
         // 半透明酒馆暗色遮罩
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor('#17110F')
-          .opacity(0.88)
+          .backgroundColor('#94080504')
+          .backdropBlur(this.motionOff() ? 0 : 4)
+
+        if (!this.motionOff() && this.game?.phase === 'PUNISHMENT_RESULT' && this.game?.punishment?.hit) {
+          Column().width('100%').height('100%').backgroundColor('#FFFFFF')
+            .opacity(keyframe(this.getElapsed(), 280, [0, 1], [.86, 0]))
+        }
 
         // 演出面板 + 底部进度条
         Column() {
           this.PhaseContent()
-
-          // 底部相位进度条（金）
-          Column() {
-            Row()
-              .width(this.getProgressPercent())
-              .height('100%')
-              .backgroundColor('#F2C777')
-          }
-          .width('70%')
-          .height(3)
-          .backgroundColor('#2B1914')
-          .borderRadius(2)
-          .margin({ top: 28 })
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
+
+        Column() {
+          Row().width(this.getProgressPercent()).height('100%')
+            .linearGradient({ angle: 90, colors: [['#A67C3D', 0], ['#F2C777', 1]] })
+        }
+        .width('72%').constraintSize({ maxWidth: 480 }).height(5)
+        .alignItems(HorizontalAlign.Start).backgroundColor('#24E8DDC8').borderRadius(99)
+        .align(Alignment.Bottom).margin({ bottom: 18 })
       }
       .width('100%')
       .height('100%')
+      .hitTestBehavior(HitTestMode.None)
     }
   }
 
@@ -252,9 +313,13 @@ export struct CinematicOverlay {
           .letterSpacing(2)
           .margin({ bottom: 18 })
 
+        if (this.showRevealedStrip()) {
+          this.RevealedStrip()
+        }
+
         if (this.game.phase === 'MATCH_START') {
           Text('酒馆开局')
-            .fontSize(34)
+            .fontSize(30)
             .fontWeight(FontWeight.Bold)
             .fontColor('#F2C777')
         } else if (this.game.phase === 'ROUND_START') {
@@ -286,13 +351,16 @@ export struct CinematicOverlay {
             .fontColor('#F2C777')
         }
 
-        // 静态公开牌条（判定/惩罚/回合结束相位）
-        if (this.showRevealedStrip()) {
-          this.RevealedStrip()
-        }
+
       }
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
+      .width('92%').constraintSize({ maxWidth: 620, minHeight: 228 })
+      .padding(20).borderRadius(8)
+      .linearGradient({ angle: 145, colors: [['#EB231511', 0], ['#F50C0807', 1]] })
+      .border({ width: 1, color: this.panelColor() })
+      .shadow({ radius: 32, color: '#BB000000', offsetY: 24 })
+      .translate({ x: this.panelShake() })
     }
   }
 
@@ -315,10 +383,7 @@ export struct CinematicOverlay {
           .animation({ duration: this.motionDuration(300) })
       }
       if (this.getProgress() > 0.34) {
-        Text(this.getTargetRankText())
-          .fontSize(56)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#F2C777')
+        CardArtwork({ rank: this.getTargetRankText(), cardWidth: 92 })
           .margin({ bottom: 10 })
           .animation({ duration: this.motionDuration(300) })
       }
@@ -343,10 +408,7 @@ export struct CinematicOverlay {
       if (!this.lowPower && this.getProgress() > 0.45) {
         Row() {
           ForEach([0, 1, 2, 3, 4], (i: number) => {
-            Column()
-              .width(22)
-              .height(32)
-              .backgroundColor('#5B1F28')
+            CardArtwork({ concealed: true, cardWidth: 22 })
               .borderRadius(3)
               .border({ width: 1, color: '#A67C3D', style: BorderStyle.Solid })
               .margin({ left: 4, right: 4 })
@@ -404,9 +466,9 @@ export struct CinematicOverlay {
   @Builder ChallengeCalloutCinematic() {
     Column() {
       Text('质疑！')
-        .fontSize(44)
+        .fontSize(32)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#FF756D')
+        .fontColor('#FFDFD2')
         .margin({ bottom: 12 })
       Text(`${this.getChallengerName()} 质疑 ${this.getChallengedName()}`)
         .fontSize(19)
@@ -414,73 +476,18 @@ export struct CinematicOverlay {
     }
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+    .scale({ x: this.calloutScale(), y: this.calloutScale() })
+    .opacity(this.motionOff() ? 1 : keyframe(this.getElapsed(), 650, [0, 0.58, 1], [0, 1, 1], [0.2, 1, 0.24, 1]))
   }
 
   // 翻牌演出：序 500ms + 每张 750ms 逐张翻转
   @Builder RevealCinematic() {
-    Column() {
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Center }) {
-        ForEach(this.getRevealedCards(), (card: CardRank, index?: number) => {
-          Stack() {
-            // 牌背
-            Column() {
-              Image($r('app.media.card_card_back'))
-                .width('100%')
-                .height('100%')
-                .objectFit(ImageFit.Cover)
-            }
-            .width(64)
-            .height(96)
-            .backgroundColor('#5B1F28')
-            .borderRadius(8)
-            .border({ width: 1, color: '#A67C3D', style: BorderStyle.Solid })
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
-            .opacity(this.isCardFlipped(index ?? 0) ? 0 : 1)
-            .animation({ duration: this.motionDuration(400) })
-
-            // 牌面
-            Column() {
-              if (card === 'JOKER') {
-                Text('★')
-                  .fontSize(30)
-                  .fontColor('#5B1F28')
-                  .fontWeight(FontWeight.Bold)
-              } else {
-                Text(card)
-                  .fontSize(30)
-                  .fontColor('#5B1F28')
-                  .fontWeight(FontWeight.Bold)
-              }
-            }
-            .width(64)
-            .height(96)
-            .backgroundColor('#E8DDC8')
-            .borderRadius(8)
-            .border({
-              width: this.isCardFlipped(index ?? 0) ? 2 : 1,
-              color: this.isCardFlipped(index ?? 0)
-                ? (this.isCardHonest(card) ? '#F2C777' : '#FF756D') : '#A67C3D',
-              style: BorderStyle.Solid
-            })
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
-            .opacity(this.isCardFlipped(index ?? 0) ? 1 : 0)
-            .scale({
-              x: this.reduceMotion || this.isCardFlipped(index ?? 0) ? 1.0 : 0.8,
-              y: this.reduceMotion || this.isCardFlipped(index ?? 0) ? 1.0 : 0.8
-            })
-            .animation({ duration: this.motionDuration(400) })
-          }
-          .width(64)
-          .height(96)
-          .margin(6)
-        })
-      }
-      .width('90%')
-    }
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
+    Row({ space: 14 }) {
+      ForEach(this.getRevealedCards(), (card: CardRank, index: number) => {
+        RevealCard({ rank: card, honest: this.isCardHonest(card),
+          progress: revealProgress(this.getElapsed(), index, this.reduceMotion || this.lowPower) })
+      }, (card: CardRank, index: number) => `${this.phaseIdentity()}:${index}:${card}`)
+    }.justifyContent(FlexAlign.Center).margin({ top: 8, bottom: 8 })
   }
 
   // 判定：谎言 / 质疑失败（文案对齐网页版 7.2）
@@ -488,7 +495,8 @@ export struct CinematicOverlay {
     Column() {
       if (this.game !== null && this.game.challenge !== null && this.game.challenge.wasBluff === true) {
         Text('谎言！')
-          .fontSize(44)
+          .translate({ x: this.verdictX() }).rotate({ angle: this.verdictAngle() })
+          .fontSize(32)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FF756D')
           .margin({ bottom: 8 })
@@ -497,47 +505,149 @@ export struct CinematicOverlay {
           .fontColor('#E8DDC8')
       } else if (this.game !== null && this.game.challenge !== null && this.game.challenge.wasBluff === false) {
         Text('质疑失败')
-          .fontSize(44)
+          .fontSize(32)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#F2C777')
+          .fontColor(this.truthColor(242, 199, 119))
           .margin({ bottom: 8 })
         Text(`${this.getPunishedName()} 受罚`)
           .fontSize(18)
-          .fontColor('#E8DDC8')
+          .fontColor(this.truthColor(232, 221, 200))
       }
     }
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+    .scale({ x: this.truthScale(), y: this.truthScale() })
   }
 
   // 惩罚开场：弹巢旋转
+  // Coordinates and transform origins are percentages of the 1774:887 stage.
+  // Six holes rotate independently of the gun image.
   @Builder RevolverArt() {
-    Stack() {
+    Stack({ alignContent: Alignment.TopStart }) {
       Image($r('app.media.cinematic_revolver_side_v1'))
-        .width('100%')
-        .height(140)
-        .objectFit(ImageFit.Contain)
-      if (this.game?.phase === 'PUNISHMENT_RESULT' && this.game?.punishment?.hit === true && !this.lowPower) {
-        Image($r('app.media.cinematic_muzzle_flash_smoke_v1'))
-          .width('100%')
-          .height(140)
-          .objectFit(ImageFit.Contain)
-          .opacity(this.reduceMotion ? 0.5 : Math.max(0, 1 - this.getProgress()))
+        .syncLoad(true).zIndex(0)
+        .width('100%').height('100%').objectFit(ImageFit.Contain)
+        .translate({ x: this.recoilX() })
+        .rotate({ angle: this.recoilAngle(), centerX: '33%', centerY: '58%' })
+      Stack({ alignContent: Alignment.TopStart }) {
+        ForEach([0, 1, 2, 3, 4, 5], (index: number) => {
+          Column().width('12%').height('18%').borderRadius(99)
+            .backgroundColor(this.currentChamber() === index ? '#FFF0B4' : '#8AFFEAB2')
+            .opacity(this.currentChamber() === index ? 1 : 0.58)
+            .shadow({ radius: this.currentChamber() === index ? 14 : 7, color: '#75F2C777' })
+            .position({ x: '44%', y: '7%' })
+            .rotate({ angle: index * 60, centerX: '50%', centerY: '240%' })
+        }, (index: number) => index.toString())
       }
+      .width('13.4%').aspectRatio(1).position({ x: '36.5%', y: '31.5%' })
+      .zIndex(1)
+      .rotate({ angle: this.cylinderAngle() })
+      Image($r('app.media.cinematic_muzzle_flash_smoke_v1'))
+        .syncLoad(true).zIndex(2)
+        .width('38%').height('48%').objectFit(ImageFit.Contain)
+        .position({ x: '77%', y: '25%' })
+        .opacity(this.flashOpacity())
+        .scale({ x: this.flashScale(), y: this.flashScale(), centerX: '0%', centerY: '50%' })
+        .translate({ x: this.flashTranslate() })
+        .grayscale(this.game?.punishment?.hit ? 0 : 0.7)
+        .brightness(this.game?.punishment?.hit ? 1 : 0.7)
+        .blendMode(BlendMode.SCREEN)
     }
-    .width('80%')
-    .height(150)
-    .rotate({ angle: !this.reduceMotion && !this.lowPower && this.game?.phase === 'PUNISHMENT_INTRO' ? Math.sin(this.getProgress() * Math.PI * 8) * 2 : 0 })
+    .width(292).height(146)
+    .translate({ y: this.triggerValue(5) })
+    .rotate({ angle: this.triggerValue(-1.4), centerX: '40%', centerY: '58%' })
+    .scale({ x: 1 + this.triggerValue(-0.008), y: 1 + this.triggerValue(-0.008), centerX: '40%', centerY: '58%' })
+  }
+
+  private motionOff(): boolean { return this.reduceMotion || this.lowPower }
+
+  private panelColor(): string {
+    if (this.game?.phase === 'CHALLENGE_CALLOUT') return '#D15D52'
+    if (this.game?.phase === 'PUNISHMENT_TRIGGER' && this.game?.tavernEvent?.type === 'DOUBLE_DANGER') return '#B8FF756D'
+    return '#80F2C777'
+  }
+
+  private panelShake(): number {
+    if (this.motionOff()) return 0
+    const duration: number = this.game?.phase === 'CHALLENGE_CALLOUT' ? 380 :
+      this.game?.phase === 'PUNISHMENT_RESULT' && this.game?.punishment?.hit ? 420 : 0
+    return duration === 0 ? 0 : keyframe(this.getElapsed(), duration, [0, .2, .4, .6, .8, 1], [0, -8, 7, -4, 3, 0])
+  }
+
+  private calloutScale(): number {
+    return this.motionOff() ? 1 : keyframe(this.getElapsed(), 650, [0, .58, 1], [.82, 1.08, 1], [.2, 1, .24, 1])
+  }
+
+  private verdictX(): number {
+    return this.motionOff() ? 0 : keyframe(this.getElapsed(), 550, [0, .25, .5, .75, 1], [0, -5, 5, -2, 0])
+  }
+
+  private verdictAngle(): number {
+    return this.motionOff() ? 0 : keyframe(this.getElapsed(), 550, [0, .25, .5, .75, 1], [0, -1, 1, 0, 0])
+  }
+
+  private truthScale(): number {
+    return this.motionOff() || this.game?.challenge?.wasBluff !== false ? 1 :
+      keyframe(this.getElapsed(), 700, [0, 1], [1.04, 1])
+  }
+
+  // ArkUI brightness also affects the transparent layer bounds. Apply the CSS
+  // brightness multiplier to glyph colors to preserve transparent text backing.
+  private truthColor(red: number, green: number, blue: number): string {
+    const gain: number = this.motionOff() ? 1 : keyframe(this.getElapsed(), 700, [0, 1], [1, 1.12])
+    return `rgb(${Math.min(255, Math.round(red * gain))},${Math.min(255, Math.round(green * gain))},${Math.min(255, Math.round(blue * gain))})`
+  }
+
+  private currentChamber(): number {
+    return this.game?.phase === 'PUNISHMENT_RESULT' ? (this.game?.punishment?.chamber ?? -1) : -1
+  }
+
+  private cylinderAngle(): number {
+    if (this.motionOff()) return 0
+    if (this.game?.phase === 'PUNISHMENT_TRIGGER') {
+      return keyframe(this.getElapsed(), 340, [0, .76, 1], [-65, 10, 0], [.2, .8, .24, 1])
+    }
+    // CSS keeps the cylinder spinning in result stages too.
+    return (this.getElapsed() % 780) / 780 * 360
+  }
+
+  private triggerValue(peak: number): number {
+    if (this.motionOff() || this.game?.phase !== 'PUNISHMENT_TRIGGER') return 0
+    return keyframe(this.getElapsed(), 720, [0, .48, .72, 1], [0, 0, peak, 0], [.2, .9, .2, 1])
+  }
+
+  private recoilX(): number {
+    if (this.motionOff() || this.game?.phase !== 'PUNISHMENT_RESULT' || !this.game?.punishment?.hit) return 0
+    return keyframe(this.getElapsed(), 300, [0, .34, 1], [0, -18, 0], [.15, .85, .28, 1])
+  }
+
+  private recoilAngle(): number { return this.recoilX() / 18 * 2.4 }
+
+  private flashOpacity(): number {
+    if (this.motionOff() || this.game?.phase !== 'PUNISHMENT_RESULT') return 0
+    return this.game?.punishment?.hit ? keyframe(this.getElapsed(), 480, [0, .12, 1], [0, 1, 0]) :
+      keyframe(this.getElapsed(), 720, [0, .24, 1], [0, .34, 0])
+  }
+
+  private flashScale(): number {
+    return this.game?.punishment?.hit ? keyframe(this.getElapsed(), 480, [0, .12, 1], [.38, 1.04, 1.24]) :
+      keyframe(this.getElapsed(), 720, [0, .24, 1], [.42, .7, .88])
+  }
+
+  private flashTranslate(): number {
+    const percent: number = this.game?.punishment?.hit ? keyframe(this.getElapsed(), 480, [0, .12, 1], [-.16, -.04, .1]) :
+      keyframe(this.getElapsed(), 720, [0, .24, 1], [-.12, -.02, .08])
+    return 292 * .38 * percent
   }
 
   @Builder PunishmentIntroCinematic() {
     Column() {
-      this.RevolverArt()
       Text(`${this.getPunishedName()} 受罚`)
-        .fontSize(34)
+        .fontSize(30)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#FF756D')
+        .fontColor('#F2C777')
         .margin({ bottom: 10 })
+      this.RevolverArt()
       Text('弹巢旋转')
         .fontSize(17)
         .fontColor('#E8DDC8')
@@ -549,12 +659,12 @@ export struct CinematicOverlay {
   // 扣压扳机（双倍危机事件特判标题）
   @Builder PunishmentTriggerCinematic() {
     Column() {
-      this.RevolverArt()
       Text(this.getTriggerTitle())
-        .fontSize(34)
+        .fontSize(30)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#FF756D')
+        .fontColor('#F2C777')
         .margin({ bottom: 10 })
+      this.RevolverArt()
       Text(`${this.getPunishedName()} 面对左轮`)
         .fontSize(17)
         .fontColor('#E8DDC8')
@@ -566,13 +676,13 @@ export struct CinematicOverlay {
   // 惩罚结果：这一发有/没有子弹
   @Builder PunishmentResultCinematic() {
     Column() {
-      this.RevolverArt()
       if (this.game !== null && this.game.punishment !== null && this.game.punishment.hit) {
         Text('这一发有子弹')
-          .fontSize(36)
+          .fontSize(27)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FF756D')
           .margin({ bottom: 8 })
+        this.RevolverArt()
         if (this.game.punishment.totalShots > 1) {
           Text(`第 ${this.game.punishment.shotNumber}/${this.game.punishment.totalShots} 枪 · ${this.getPunishedName()} 已淘汰`)
             .fontSize(16)
@@ -584,10 +694,11 @@ export struct CinematicOverlay {
         }
       } else {
         Text('这一发没有子弹')
-          .fontSize(36)
+          .fontSize(27)
           .fontWeight(FontWeight.Bold)
           .fontColor('#F2C777')
           .margin({ bottom: 8 })
+        this.RevolverArt()
         if (this.game !== null && this.game.punishment !== null && this.game.punishment.totalShots > 1) {
           Text(`第 ${this.game.punishment.shotNumber}/${this.game.punishment.totalShots} 枪 · ${this.getPunishedName()} 暂时安全`)
             .fontSize(16)
@@ -597,6 +708,10 @@ export struct CinematicOverlay {
             .fontSize(16)
             .fontColor('#E8DDC8')
         }
+      }
+      if (this.game?.punishment !== null) {
+        Text(`弹巢 ${(this.game?.punishment?.chamber ?? 0) + 1}/6 · 第 ${this.game?.punishment?.shotNumber ?? 1}/${this.game?.punishment?.totalShots ?? 1} 枪`)
+          .fontSize(12).fontColor('#D4A85D').margin({ top: 8 })
       }
     }
     .justifyContent(FlexAlign.Center)
@@ -628,7 +743,7 @@ export struct CinematicOverlay {
         .fontColor('#D4A85D')
         .margin({ bottom: 10 })
       Text(this.getWinnerName())
-        .fontSize(34)
+        .fontSize(30)
         .fontWeight(FontWeight.Bold)
         .fontColor('#F2C777')
     }
@@ -638,36 +753,10 @@ export struct CinematicOverlay {
 
   // 静态公开牌条（判定/惩罚/回合结束相位，与网页版 StaticRevealedCards 一致）
   @Builder RevealedStrip() {
-    Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Center }) {
+    Row({ space: 10 }) {
       ForEach(this.getRevealedCards(), (card: CardRank) => {
-        Column() {
-          if (card === 'JOKER') {
-            Text('★')
-              .fontSize(20)
-              .fontColor('#5B1F28')
-              .fontWeight(FontWeight.Bold)
-          } else {
-            Text(card)
-              .fontSize(20)
-              .fontColor('#5B1F28')
-              .fontWeight(FontWeight.Bold)
-          }
-        }
-        .width(42)
-        .height(60)
-        .backgroundColor('#E8DDC8')
-        .borderRadius(6)
-        .border({
-          width: 2,
-          color: this.isCardHonest(card) ? '#F2C777' : '#FF756D',
-          style: BorderStyle.Solid
-        })
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-        .margin(4)
-      })
-    }
-    .width('90%')
-    .margin({ top: 18 })
+        StaticRevealedCard({ rank: card, honest: this.isCardHonest(card) })
+      }, (card: CardRank, index: number) => `${this.game?.matchId}:${this.game?.roundNumber}:${index}:${card}`)
+    }.justifyContent(FlexAlign.Center).margin({ bottom: 12 })
   }
 }

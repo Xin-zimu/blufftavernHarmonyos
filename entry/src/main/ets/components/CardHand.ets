@@ -1,8 +1,8 @@
 // 手牌组件 - 对应网页版 hand 区
-// 统一米黄卡面（A/K/Q/JOKER 同卡面，JOKER 用小丑图）；选中上浮 + 金色描边
+// 完整 2:3 卡牌素材；选中上浮 + 金色描边
 
 import { CardRank } from '../model/GameTypes'
-import { getCardImage } from '../utils/ArtResources'
+import { CardArtwork } from './CardArtwork'
 
 @ComponentV2
 export struct CardHand {
@@ -28,7 +28,7 @@ export struct CardHand {
     Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Center }) {
       ForEach(this.hand, (card: CardRank, index: number) => {
         this.CardItem(card, index)
-      })
+      }, (card: CardRank, index: number) => `${index}:${card}`)
     }
     .width('100%')
     .padding({ top: 8, bottom: 8 })
@@ -36,21 +36,10 @@ export struct CardHand {
 
   @Builder CardItem(card: CardRank, index: number) {
     Column() {
-      if (card === 'JOKER') {
-        Image(getCardImage('JOKER'))
-          .width('100%')
-          .height('100%')
-          .borderRadius(10)
-          .objectFit(ImageFit.Cover)
-      } else {
-        Text(card)
-          .fontSize(28)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#5B1F28')
-      }
+      CardArtwork({ rank: card, cardWidth: 68 })
     }
     .width(68)
-    .height(100)
+    .height(102)
     .backgroundColor('#E8DDC8')
     .borderRadius(10)
     .border({

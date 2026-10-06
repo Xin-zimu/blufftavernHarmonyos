@@ -1,6 +1,8 @@
 // 目标牌 HUD 组件 - 对应网页版 RoundTargetHud
 // 本轮目标 + 目标牌 + 第 N 轮 · 出牌声明均视为 X
 
+import { CardArtwork } from './CardArtwork'
+
 import { TargetRank } from '../model/GameTypes'
 
 @ComponentV2
@@ -15,17 +17,7 @@ export struct TargetHUD {
         .fontColor('#D4A85D')
         .margin({ bottom: 6 })
 
-      // 目标牌牌面（米黄卡面）
-      Text(this.targetCard)
-        .fontSize(30)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#5B1F28')
-        .width(52)
-        .height(64)
-        .textAlign(TextAlign.Center)
-        .backgroundColor('#E8DDC8')
-        .borderRadius(8)
-        .border({ width: 2, color: '#A67C3D', style: BorderStyle.Solid })
+      CardArtwork({ rank: this.targetCard, cardWidth: 52 })
         .margin({ bottom: 6 })
 
       Text(`第 ${this.roundNumber} 轮 · 出牌声明均视为 ${this.targetCard}`)
